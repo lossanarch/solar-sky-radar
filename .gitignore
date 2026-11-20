@@ -1,0 +1,27 @@
+# Byte-compiled / caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Node / frontend build caches
+node_modules/
+dist-preview/
+*.tsbuildinfo
+
+# Runtime caches & local secrets
+.cache/
+dev/.runtime_cache/
+.env
+.env.*
+
+# OS / editor
+.DS_Store
+Thumbs.db
