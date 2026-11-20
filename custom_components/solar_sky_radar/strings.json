@@ -1,0 +1,42 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Solar Sky Radar Setup",
+        "description": "Configure your location (defaults to your Home Assistant home zone), regional coverage radius, satellite/radar sources, and optional NASA FIRMS Map Key.",
+        "data": {
+          "latitude": "Center Latitude",
+          "longitude": "Center Longitude",
+          "radius_deg": "Regional Coverage Radius (degrees, ~110 km per degree)",
+          "satellite_provider": "Geostationary Satellite Source",
+          "radar_provider": "Rain Radar Source",
+          "firms_map_key": "NASA FIRMS Map Key (optional in Australia where DEA Hotspots is built in)",
+          "enable_dea_hotspots": "Include Geoscience Australia DEA Bushfire Hotspots (Australia)",
+          "enable_bom_ftp": "Prefer direct BOM Anonymous FTP GeoTIFF/JPG when TCP port 21 is open",
+          "update_minutes": "Refresh Interval (minutes)"
+        }
+      }
+    },
+    "abort": {
+      "already_configured": "This location is already configured."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Solar Sky Radar Options",
+        "data": {
+          "latitude": "Center Latitude",
+          "longitude": "Center Longitude",
+          "radius_deg": "Regional Coverage Radius (degrees)",
+          "satellite_provider": "Geostationary Satellite Source",
+          "radar_provider": "Rain Radar Source",
+          "firms_map_key": "NASA FIRMS Map Key",
+          "enable_dea_hotspots": "Include Geoscience Australia DEA Bushfire Hotspots",
+          "enable_bom_ftp": "Prefer direct BOM Anonymous FTP when port 21 is open",
+          "update_minutes": "Refresh Interval (minutes)"
+        }
+      }
+    }
+  }
+}

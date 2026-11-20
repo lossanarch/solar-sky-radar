@@ -1,0 +1,13 @@
+{
+  "domain": "solar_sky_radar",
+  "name": "Solar Sky Radar",
+  "codeowners": ["@solar-sky-radar"],
+  "config_flow": true,
+  "dependencies": ["http"],
+  "after_dependencies": ["frontend", "lovelace"],
+  "documentation": "https://github.com/solar-sky-radar/solar-sky-radar",
+  "iot_class": "cloud_polling",
+  "issue_tracker": "https://github.com/solar-sky-radar/solar-sky-radar/issues",
+  "requirements": ["pillow>=10.0.0", "numpy>=1.26.0"],
+  "version": "0.1.0"
+}
