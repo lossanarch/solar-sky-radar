@@ -13,6 +13,7 @@ env/
 
 # Node / frontend build caches
 node_modules/
+dist/
 dist-preview/
 *.tsbuildinfo
 

@@ -31,15 +31,15 @@ const EMPTY_FC: GeoJSON.FeatureCollection = {
   features: [],
 };
 
-function buildPlaceholderStyle(dark: boolean): StyleSpecification {
+function buildFallbackStyle(dark: boolean): StyleSpecification {
   return {
     version: 8,
     sources: {},
     layers: [
       {
-        id: "ssr-placeholder-bg",
+        id: "ssr-fallback-bg",
         type: "background",
-        paint: { "background-color": dark ? "#0b1120" : "#f1f5f9" },
+        paint: { "background-color": dark ? "#0b1120" : "#e2e8f0" },
       },
     ],
   };
@@ -112,17 +112,17 @@ export function sanitizeVectorStyleForPrivacy(
       if (id.includes("highway_major") || id.includes("highway_motorway")) {
         if (id.includes("casing")) {
           paint["line-color"] = dark
-            ? "rgba(15, 23, 42, 0.45)"
-            : "rgba(255, 255, 255, 0.45)";
+            ? "rgba(15, 23, 42, 0.42)"
+            : "rgba(255, 255, 255, 0.42)";
         } else {
           paint["line-color"] = dark
-            ? "rgba(148, 163, 184, 0.36)"
-            : "rgba(71, 85, 105, 0.34)";
+            ? "rgba(148, 163, 184, 0.34)"
+            : "rgba(71, 85, 105, 0.32)";
         }
       } else if (id.includes("boundary")) {
         paint["line-color"] = dark
-          ? "rgba(203, 213, 225, 0.48)"
-          : "rgba(51, 65, 85, 0.46)";
+          ? "rgba(203, 213, 225, 0.46)"
+          : "rgba(51, 65, 85, 0.44)";
       }
     }
 
@@ -288,7 +288,7 @@ async function fetchPrivacySafeVectorStyle(
         return sanitizeVectorStyleForPrivacy(json, dark);
       } catch {
         SAFE_VECTOR_STYLE_CACHE.delete(cacheKey);
-        return buildPlaceholderStyle(dark);
+        return buildFallbackStyle(dark);
       }
     })();
     SAFE_VECTOR_STYLE_CACHE.set(cacheKey, pending);
@@ -389,6 +389,10 @@ export class MapController {
   private styleReady = false;
   private currentStyleKey = "";
   private styleSeq = 0;
+  private mountPromise: Promise<void> | null = null;
+
+  private appliedUrls = { tc: "", vc: "", rad: "" };
+  private appliedCoordsKey = "";
 
   private manifest: ManifestPayload | null = null;
   private hazards: HazardsPayload | null = null;
@@ -398,66 +402,13 @@ export class MapController {
 
   constructor(
     private container: HTMLElement,
-    private getHass: () => HomeAssistantLike | undefined
+    private getHass: () => HomeAssistantLike | undefined,
+    private onMapInteract?: () => void
   ) {}
 
   init(config: SolarSkyRadarCardConfig): void {
     this.config = config;
-    const centerLat =
-      config.center_latitude ?? this.getHass()?.config?.latitude ?? -37.8136;
-    const centerLon =
-      config.center_longitude ?? this.getHass()?.config?.longitude ?? 144.9631;
-    const zoom = config.zoom_level ?? 7.2;
-    const isDark = resolveIsDark(config.basemap_theme, this.getHass());
-
-    // Disable `localIdeographFontFamily` so MapLibre never invokes TinySDF canvas pixel readback
-    this.map = new maplibregl.Map({
-      container: this.container,
-      style: buildPlaceholderStyle(isDark),
-      center: [centerLon, centerLat],
-      zoom,
-      minZoom: 3,
-      maxZoom: 12,
-      localIdeographFontFamily: false,
-      attributionControl: false,
-      pitchWithRotate: false,
-      dragRotate: false,
-      transformRequest: (url) => {
-        const token = this.getHass()?.auth?.data?.access_token;
-        if (token && url.startsWith("/") && url.includes("/api/")) {
-          return {
-            url: `${window.location.origin}${url}`,
-            headers: { Authorization: `Bearer ${token}` },
-          };
-        }
-        return { url };
-      },
-    });
-
-    this.map.addControl(
-      new maplibregl.AttributionControl({ compact: true }),
-      "bottom-right"
-    );
-
-    this.windRenderer = new WindStreamlineRenderer(this.container);
-    this.windRenderer.attachMap(this.map);
-
-    this.map.on("styledata", () => {
-      if (this.map?.isStyleLoaded() && !this.map.getSource("ssr-true-colour")) {
-        this.styleReady = true;
-        this.setupOverlayLayers();
-        this.syncAllState();
-      }
-    });
-
-    this.updateHomeMarker(centerLat, centerLon);
-    void this.applyResolvedStyle(config.basemap_theme ?? "auto");
-
-    this.resizeObserver = new ResizeObserver(() => {
-      this.map?.resize();
-      this.windRenderer?.resize();
-    });
-    this.resizeObserver.observe(this.container);
+    this.mountPromise = this.mountInitialMap();
   }
 
   private computeStyleKey(theme: BasemapTheme): {
@@ -476,33 +427,146 @@ export class MapController {
     return { styleKey: isDark ? "ofm_dark" : "ofm_light", isDark };
   }
 
-  private async applyResolvedStyle(theme: BasemapTheme): Promise<void> {
-    if (!this.map || this.destroyed) return;
+  private async resolveStyleSpec(theme: BasemapTheme): Promise<{
+    styleKey: string;
+    isDark: boolean;
+    styleSpec: StyleSpecification;
+  }> {
     const { styleKey, isDark } = this.computeStyleKey(theme);
-    if (styleKey === this.currentStyleKey) return;
-
-    this.currentStyleKey = styleKey;
-    const seq = ++this.styleSeq;
     const bm = this.manifest?.providers.basemap;
 
-    let styleSpec: StyleSpecification;
     if ((styleKey === "bom_dark" || styleKey === "bom_light") && bm) {
       const baseUrl =
         styleKey === "bom_dark" ? bm.bom_dark_tiles! : bm.bom_light_tiles!;
-      styleSpec = buildBomRasterStyle(
-        styleKey === "bom_dark",
-        baseUrl,
-        bm.bom_towns_overlay,
-        bm.bom_borders_overlay
-      );
-    } else {
-      const url = isDark ? OPENFREEMAP_DARK_STYLE : OPENFREEMAP_LIGHT_STYLE;
-      styleSpec = await fetchPrivacySafeVectorStyle(url, isDark);
+      return {
+        styleKey,
+        isDark,
+        styleSpec: buildBomRasterStyle(
+          styleKey === "bom_dark",
+          baseUrl,
+          bm.bom_towns_overlay,
+          bm.bom_borders_overlay
+        ),
+      };
     }
 
+    const url = isDark ? OPENFREEMAP_DARK_STYLE : OPENFREEMAP_LIGHT_STYLE;
+    const styleSpec = await fetchPrivacySafeVectorStyle(url, isDark);
+    return { styleKey, isDark, styleSpec };
+  }
+
+  private async mountInitialMap(): Promise<void> {
+    const seq = ++this.styleSeq;
+    const { styleKey, isDark, styleSpec } = await this.resolveStyleSpec(
+      this.config.basemap_theme ?? "auto"
+    );
+    if (this.destroyed) return;
+
+    this.currentStyleKey = styleKey;
+    const centerLat =
+      this.config.center_latitude ??
+      this.manifest?.location.latitude ??
+      this.getHass()?.config?.latitude ??
+      -37.8136;
+    const centerLon =
+      this.config.center_longitude ??
+      this.manifest?.location.longitude ??
+      this.getHass()?.config?.longitude ??
+      144.9631;
+    const zoom = this.config.zoom_level ?? 7.2;
+
+    // Construct MapLibre directly with the resolved sanitized style (no startup setStyle race!)
+    // and `attributionControl: false` (card renders a tiny collapsed-by-default `i` badge instead)
+    this.map = new maplibregl.Map({
+      container: this.container,
+      style: styleSpec,
+      center: [centerLon, centerLat],
+      zoom,
+      minZoom: 3,
+      maxZoom: 12,
+      localIdeographFontFamily: false,
+      attributionControl: false,
+      pitchWithRotate: false,
+      dragRotate: false,
+      transformRequest: (url) => {
+        const auth = this.getHass()?.auth as
+          | { data?: { access_token?: string }; accessToken?: string }
+          | undefined;
+        const token = auth?.data?.access_token ?? auth?.accessToken;
+        if (token && url.startsWith("/") && url.includes("/api/")) {
+          return {
+            url: `${window.location.origin}${url}`,
+            headers: { Authorization: `Bearer ${token}` },
+          };
+        }
+        return { url };
+      },
+    });
+
+    this.windRenderer = new WindStreamlineRenderer(this.container);
+    this.windRenderer.attachMap(this.map);
+    this.windRenderer.setOptions(
+      this.config.show_wind ?? true,
+      this.config.wind_level ?? "850hPa",
+      this.config.wind_opacity ?? 0.85,
+      isDark
+    );
+
+    const ensureOverlays = () => this.ensureOverlayLayers();
+    this.map.on("style.load", ensureOverlays);
+    this.map.on("load", ensureOverlays);
+    this.map.on("idle", ensureOverlays);
+
+    if (this.onMapInteract) {
+      this.map.on("dragstart", this.onMapInteract);
+      this.map.on("click", this.onMapInteract);
+    }
+
+    this.updateHomeMarker(centerLat, centerLon);
+
+    this.resizeObserver = new ResizeObserver(() => {
+      this.map?.resize();
+      this.windRenderer?.resize();
+    });
+    this.resizeObserver.observe(this.container);
+
+    // If theme changed while initial style JSON was fetching, apply latest style cleanly
+    const latestKey = this.computeStyleKey(
+      this.config.basemap_theme ?? "auto"
+    ).styleKey;
+    if (seq === this.styleSeq && latestKey !== this.currentStyleKey) {
+      void this.applyStyleChange(this.config.basemap_theme ?? "auto");
+    }
+  }
+
+  private async applyStyleChange(theme: BasemapTheme): Promise<void> {
+    if (this.mountPromise) {
+      await this.mountPromise;
+    }
+    if (!this.map || this.destroyed) return;
+    const { styleKey } = this.computeStyleKey(theme);
+    if (styleKey === this.currentStyleKey) return;
+
+    const seq = ++this.styleSeq;
+    const resolved = await this.resolveStyleSpec(theme);
     if (this.destroyed || !this.map || seq !== this.styleSeq) return;
+
+    this.currentStyleKey = resolved.styleKey;
     this.styleReady = false;
-    this.map.setStyle(styleSpec);
+    this.appliedUrls = { tc: "", vc: "", rad: "" };
+    // `diff: false` forces clean synchronous `Style.loadJSON` -> fires `style.load` deterministically
+    this.map.setStyle(resolved.styleSpec, { diff: false });
+  }
+
+  private ensureOverlayLayers(): void {
+    if (!this.map || this.destroyed) return;
+    if (!this.map.getSource("ssr-true-colour")) {
+      this.appliedUrls = { tc: "", vc: "", rad: "" };
+      this.appliedCoordsKey = "";
+      this.styleReady = true;
+      this.setupOverlayLayers();
+      this.syncAllState();
+    }
   }
 
   /**
@@ -568,12 +632,33 @@ export class MapController {
     const anchorId = this.findOverlayAnchorLayerId();
     const labelAnchorId = this.findFirstSymbolLayerId();
     const coords = this.defaultCoords();
+    this.appliedCoordsKey = JSON.stringify(coords);
     const isDark = resolveIsDark(this.config.basemap_theme, this.getHass());
+
+    const initTc =
+      (this.config.show_true_colour ?? true) && this.latestFrame?.trueColourBlobUrl
+        ? this.latestFrame.trueColourBlobUrl
+        : TRANSPARENT_1X1;
+    const initVc =
+      (this.config.show_cloud_overlay ?? false) &&
+      this.latestFrame?.cloudOverlayBlobUrl
+        ? this.latestFrame.cloudOverlayBlobUrl
+        : TRANSPARENT_1X1;
+    const initRad =
+      (this.config.show_radar ?? true) && this.latestFrame?.radarBlobUrl
+        ? this.latestFrame.radarBlobUrl
+        : TRANSPARENT_1X1;
+
+    this.appliedUrls = {
+      tc: initTc === TRANSPARENT_1X1 ? "" : initTc,
+      vc: initVc === TRANSPARENT_1X1 ? "" : initVc,
+      rad: initRad === TRANSPARENT_1X1 ? "" : initRad,
+    };
 
     // 1. Satellite Visible True Colour Image Source
     this.map.addSource("ssr-true-colour", {
       type: "image",
-      url: TRANSPARENT_1X1,
+      url: initTc,
       coordinates: coords,
     });
     this.map.addLayer(
@@ -581,8 +666,11 @@ export class MapController {
         id: "ssr-true-colour-layer",
         type: "raster",
         source: "ssr-true-colour",
+        layout: {
+          visibility: (this.config.show_true_colour ?? true) ? "visible" : "none",
+        },
         paint: {
-          "raster-opacity": this.config.true_colour_opacity ?? 0.85,
+          "raster-opacity": this.config.true_colour_opacity ?? 0.88,
           "raster-fade-duration": 0,
           "raster-resampling": "linear",
         },
@@ -593,7 +681,7 @@ export class MapController {
     // 2. Visual Cloud / Solar Classification Overlay
     this.map.addSource("ssr-visual-cloud", {
       type: "image",
-      url: TRANSPARENT_1X1,
+      url: initVc,
       coordinates: coords,
     });
     this.map.addLayer(
@@ -601,8 +689,11 @@ export class MapController {
         id: "ssr-visual-cloud-layer",
         type: "raster",
         source: "ssr-visual-cloud",
+        layout: {
+          visibility: (this.config.show_cloud_overlay ?? false) ? "visible" : "none",
+        },
         paint: {
-          "raster-opacity": this.config.cloud_opacity ?? 0.78,
+          "raster-opacity": this.config.cloud_opacity ?? 0.58,
           "raster-fade-duration": 0,
           "raster-resampling": "linear",
         },
@@ -613,7 +704,7 @@ export class MapController {
     // 3. Rain Radar Overlay (BOM 5-min WMTS / RainViewer global)
     this.map.addSource("ssr-radar", {
       type: "image",
-      url: TRANSPARENT_1X1,
+      url: initRad,
       coordinates: coords,
     });
     this.map.addLayer(
@@ -881,7 +972,7 @@ export class MapController {
     if (!this.map) return;
 
     const isDark = resolveIsDark(config.basemap_theme, this.getHass());
-    void this.applyResolvedStyle(config.basemap_theme ?? "auto");
+    void this.applyStyleChange(config.basemap_theme ?? "auto");
 
     this.syncLayerVisibilityAndOpacity();
     this.windRenderer?.setOptions(
@@ -916,9 +1007,13 @@ export class MapController {
 
     if (this.styleReady && this.map) {
       const coords = manifest.bbox.coordinates;
-      for (const srcId of ["ssr-true-colour", "ssr-visual-cloud", "ssr-radar"]) {
-        const src = this.map.getSource(srcId) as ImageSource | undefined;
-        src?.setCoordinates(coords);
+      const nextCoordsKey = JSON.stringify(coords);
+      if (nextCoordsKey !== this.appliedCoordsKey) {
+        this.appliedCoordsKey = nextCoordsKey;
+        for (const srcId of ["ssr-true-colour", "ssr-visual-cloud", "ssr-radar"]) {
+          const src = this.map.getSource(srcId) as ImageSource | undefined;
+          src?.setCoordinates(coords);
+        }
       }
       const arcsSrc = this.map.getSource("ssr-solar-arcs") as GeoJSONSource | undefined;
       if (arcsSrc && manifest.solar?.arrival_arcs_geojson) {
@@ -954,17 +1049,35 @@ export class MapController {
     const coords = this.defaultCoords();
 
     const tcSrc = this.map.getSource("ssr-true-colour") as ImageSource | undefined;
-    if (tcSrc && (this.config.show_true_colour ?? true) && frame.trueColourBlobUrl) {
+    if (
+      tcSrc &&
+      (this.config.show_true_colour ?? true) &&
+      frame.trueColourBlobUrl &&
+      frame.trueColourBlobUrl !== this.appliedUrls.tc
+    ) {
+      this.appliedUrls.tc = frame.trueColourBlobUrl;
       tcSrc.updateImage({ url: frame.trueColourBlobUrl, coordinates: coords });
     }
 
     const vcSrc = this.map.getSource("ssr-visual-cloud") as ImageSource | undefined;
-    if (vcSrc && (this.config.show_cloud_overlay ?? true) && frame.cloudOverlayBlobUrl) {
+    if (
+      vcSrc &&
+      (this.config.show_cloud_overlay ?? false) &&
+      frame.cloudOverlayBlobUrl &&
+      frame.cloudOverlayBlobUrl !== this.appliedUrls.vc
+    ) {
+      this.appliedUrls.vc = frame.cloudOverlayBlobUrl;
       vcSrc.updateImage({ url: frame.cloudOverlayBlobUrl, coordinates: coords });
     }
 
     const radSrc = this.map.getSource("ssr-radar") as ImageSource | undefined;
-    if (radSrc && (this.config.show_radar ?? true) && frame.radarBlobUrl) {
+    if (
+      radSrc &&
+      (this.config.show_radar ?? true) &&
+      frame.radarBlobUrl &&
+      frame.radarBlobUrl !== this.appliedUrls.rad
+    ) {
+      this.appliedUrls.rad = frame.radarBlobUrl;
       radSrc.updateImage({ url: frame.radarBlobUrl, coordinates: coords });
     }
 
@@ -1016,13 +1129,18 @@ export class MapController {
     };
 
     setVis("ssr-true-colour-layer", this.config.show_true_colour ?? true);
-    setRasterOp("ssr-true-colour-layer", this.config.true_colour_opacity ?? 0.85);
+    setRasterOp("ssr-true-colour-layer", this.config.true_colour_opacity ?? 0.88);
 
-    setVis("ssr-visual-cloud-layer", this.config.show_cloud_overlay ?? true);
-    setRasterOp("ssr-visual-cloud-layer", this.config.cloud_opacity ?? 0.78);
+    setVis("ssr-visual-cloud-layer", this.config.show_cloud_overlay ?? false);
+    setRasterOp("ssr-visual-cloud-layer", this.config.cloud_opacity ?? 0.58);
 
     setVis("ssr-radar-layer", this.config.show_radar ?? true);
     setRasterOp("ssr-radar-layer", this.config.radar_opacity ?? 0.84);
+
+    // If a layer was just toggled ON and `latestFrame` already has its blob URL, ensure ImageSource is populated
+    if (this.latestFrame) {
+      this.applyFrame(this.latestFrame);
+    }
 
     const ringsOn = this.config.show_solar_rings ?? true;
     setVis("ssr-solar-arcs-line", ringsOn);

@@ -230,13 +230,13 @@ export class SolarSkyRadarCardEditor extends LitElement {
           />
         </label>
         <label class="field" style="margin-bottom: 8px;">
-          <span>True Colour Opacity (${Math.round((c.true_colour_opacity ?? 0.84) * 100)}%)</span>
+          <span>True Colour Opacity (${Math.round((c.true_colour_opacity ?? 0.88) * 100)}%)</span>
           <input
             type="range"
             min="0.1"
             max="1"
             step="0.05"
-            .value=${String(c.true_colour_opacity ?? 0.84)}
+            .value=${String(c.true_colour_opacity ?? 0.88)}
             @input=${(e: Event) =>
               this.updateField(
                 "true_colour_opacity",
@@ -249,7 +249,7 @@ export class SolarSkyRadarCardEditor extends LitElement {
           <span>Visual Cloud Overlay (Solar Prediction Layer)</span>
           <input
             type="checkbox"
-            .checked=${c.show_cloud_overlay ?? true}
+            .checked=${c.show_cloud_overlay ?? false}
             @change=${(e: Event) =>
               this.updateField(
                 "show_cloud_overlay",
@@ -261,27 +261,27 @@ export class SolarSkyRadarCardEditor extends LitElement {
           <label class="field">
             <span>Cloud Overlay Mode</span>
             <select
-              .value=${c.cloud_mode ?? "cloud_mask"}
+              .value=${c.cloud_mode ?? "solar_cloud"}
               @change=${(e: Event) =>
                 this.updateField(
                   "cloud_mode",
                   (e.target as HTMLSelectElement).value as CloudRenderMode
                 )}
             >
-              <option value="cloud_mask">Clean Visual Cloud Mask</option>
               <option value="solar_cloud">
                 Solar Classification (Cirrus / Patchy / Storm)
               </option>
+              <option value="cloud_mask">Clean Visual Cloud Mask</option>
             </select>
           </label>
           <label class="field">
-            <span>Cloud Opacity (${Math.round((c.cloud_opacity ?? 0.78) * 100)}%)</span>
+            <span>Cloud Opacity (${Math.round((c.cloud_opacity ?? 0.58) * 100)}%)</span>
             <input
               type="range"
               min="0.1"
               max="1"
               step="0.05"
-              .value=${String(c.cloud_opacity ?? 0.78)}
+              .value=${String(c.cloud_opacity ?? 0.58)}
               @input=${(e: Event) =>
                 this.updateField(
                   "cloud_opacity",

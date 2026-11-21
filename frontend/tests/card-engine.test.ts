@@ -169,6 +169,74 @@ describe("FramePlayer", () => {
       vi.useRealTimers();
     }
   });
+
+  it("never leaks raw authenticated /api/ paths before fetchWithAuth blob finishes", async () => {
+    const authManifest: ManifestPayload = {
+      ...MOCK_MANIFEST,
+      providers: {
+        ...MOCK_MANIFEST.providers,
+        satellite: {
+          ...MOCK_MANIFEST.providers.satellite,
+          frames: [
+            {
+              key: "s2",
+              epoch: 1600,
+              iso_utc: "2026-11-20T00:10:00Z",
+              true_colour_url: "/api/solar_sky_radar/frame/true_colour/s2.webp",
+              cloud_mask_url: "/api/solar_sky_radar/frame/cloud_mask/s2.webp",
+              solar_cloud_url: "/api/solar_sky_radar/frame/solar_cloud/s2.webp",
+            },
+          ],
+        },
+      },
+      timeline: [
+        { epoch: 1600, iso_utc: "2026-11-20T00:10:00Z", offset_minutes: 0, satellite_key: "s2", radar_key: null },
+      ],
+    };
+
+    const emitted: Array<{ tc: string | null; vc: string | null }> = [];
+    const player = new FramePlayer(
+      () => ({
+        fetchWithAuth: async () =>
+          new Response(new Uint8Array([82, 73, 70, 70]), {
+            status: 200,
+            headers: { "Content-Type": "image/webp" },
+          }),
+      }),
+      (resolved) =>
+        emitted.push({
+          tc: resolved.trueColourBlobUrl,
+          vc: resolved.cloudOverlayBlobUrl,
+        }),
+      () => {}
+    );
+    player.setEntryId("entry-abc");
+    player.setLayerFlags({
+      trueColour: true,
+      cloudOverlay: true,
+      cloudMode: "cloud_mask",
+      radar: false,
+    });
+
+    await player.loadManifest(authManifest, false);
+    expect(emitted[emitted.length - 1].tc?.startsWith("blob:")).toBe(true);
+    expect(emitted[emitted.length - 1].vc?.startsWith("blob:")).toBe(true);
+
+    // Switching to solar_cloud must never emit a raw `/api/...` URL while fetching the new blob
+    player.setLayerFlags({
+      trueColour: true,
+      cloudOverlay: true,
+      cloudMode: "solar_cloud",
+      radar: false,
+    });
+    for (const e of emitted) {
+      if (e.vc !== null) {
+        expect(e.vc.startsWith("blob:")).toBe(true);
+      }
+    }
+
+    player.destroy();
+  });
 });
 
 describe("resolveAutoplayMode & sanitizeVectorStyleForPrivacy", () => {

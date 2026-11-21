@@ -1,16 +1,20 @@
 import type { Map as MapLibreMap } from "maplibre-gl";
 import type { WindAltitudeMode, WindPayload } from "../types";
 
-interface Particle {
+interface Streamline {
   lon: number;
   lat: number;
   age: number;
   maxAge: number;
+  trail: Array<[number, number]>;
+  lastSpeedKmh: number;
 }
 
+const MAX_TRAIL_POINTS = 24;
+
 /**
- * Renders smooth 60fps animated wind streamlines over the MapLibre viewport,
- * supporting both 10m surface wind and 850hPa cloud-steering wind fields.
+ * Renders smooth, curved meteorological wind streamlines (never short blue rain-like streaks)
+ * over the MapLibre viewport, supporting 850 hPa cloud-steering and 10 m surface wind fields.
  */
 export class WindStreamlineRenderer {
   private canvas: HTMLCanvasElement;
@@ -21,9 +25,10 @@ export class WindStreamlineRenderer {
   private visible = true;
   private opacity = 0.85;
   private darkTheme = true;
-  private particles: Particle[] = [];
+  private streamlines: Streamline[] = [];
   private animId: number | null = null;
   private isMoving = false;
+  private destroyed = false;
 
   constructor(container: HTMLElement) {
     this.canvas = document.createElement("canvas");
@@ -47,7 +52,7 @@ export class WindStreamlineRenderer {
     map.on("movestart", this.handleMoveStart);
     map.on("moveend", this.handleMoveEnd);
     map.on("resize", this.handleResize);
-    this.seedParticles();
+    this.seedStreamlines();
     this.updateLoopState();
   }
 
@@ -58,12 +63,12 @@ export class WindStreamlineRenderer {
 
   private handleMoveEnd = (): void => {
     this.isMoving = false;
-    this.seedParticles();
+    this.seedStreamlines();
   };
 
   private handleResize = (): void => {
     this.resize();
-    this.seedParticles();
+    this.seedStreamlines();
   };
 
   resize(): void {
@@ -77,7 +82,7 @@ export class WindStreamlineRenderer {
 
   setWindData(data: WindPayload | null): void {
     this.windData = data;
-    this.seedParticles();
+    this.seedStreamlines();
     this.updateLoopState();
   }
 
@@ -96,7 +101,7 @@ export class WindStreamlineRenderer {
     this.canvas.style.display = visible ? "block" : "none";
     if (levelChanged) {
       this.clearCanvas();
-      this.seedParticles();
+      this.seedStreamlines();
     }
     this.updateLoopState();
   }
@@ -106,7 +111,7 @@ export class WindStreamlineRenderer {
     this.ctx.clearRect(0, 0, this.canvas.width / dpr, this.canvas.height / dpr);
   }
 
-  private seedParticles(): void {
+  private seedStreamlines(): void {
     if (!this.map || !this.windData) return;
     const bounds = this.map.getBounds();
     const w = Math.max(bounds.getWest(), this.windData.bbox.west);
@@ -114,36 +119,65 @@ export class WindStreamlineRenderer {
     const s = Math.max(bounds.getSouth(), this.windData.bbox.south);
     const n = Math.min(bounds.getNorth(), this.windData.bbox.north);
     if (w >= e || s >= n) {
-      this.particles = [];
+      this.streamlines = [];
       return;
     }
 
     const rect = this.canvas.parentElement?.getBoundingClientRect();
     const area = (rect?.width ?? 500) * (rect?.height ?? 360);
-    const count = Math.max(220, Math.min(950, Math.round(area / 520)));
+    // Sparse, graceful airflow ribbons (~90-155 streamlines) instead of dense rain-like streaks
+    const count = Math.max(85, Math.min(155, Math.round(area / 3200)));
 
-    this.particles = Array.from({ length: count }, () => this.randomParticle(w, s, e, n));
+    this.streamlines = Array.from({ length: count }, () =>
+      this.spawnStreamline(w, s, e, n, true)
+    );
   }
 
-  private randomParticle(w: number, s: number, e: number, n: number): Particle {
-    return {
-      lon: w + Math.random() * (e - w),
-      lat: s + Math.random() * (n - s),
-      age: Math.floor(Math.random() * 75),
-      maxAge: 65 + Math.floor(Math.random() * 45),
-    };
+  private spawnStreamline(
+    w: number,
+    s: number,
+    e: number,
+    n: number,
+    prewarm = false
+  ): Streamline {
+    let lon = w + Math.random() * (e - w);
+    let lat = s + Math.random() * (n - s);
+    const maxAge = 95 + Math.floor(Math.random() * 65);
+    const age = prewarm ? Math.floor(Math.random() * maxAge) : 0;
+    const trail: Array<[number, number]> = [[lon, lat]];
+    let lastSpeedKmh = 20;
+
+    // Pre-integrate a short curved ribbon on initial spawn so streamlines start as smooth curves
+    if (prewarm && this.map && this.windData) {
+      const zoom = this.map.getZoom();
+      const stepScale = 0.000105 * Math.pow(2, 7 - zoom);
+      const warmupSteps = Math.min(MAX_TRAIL_POINTS - 1, age);
+      for (let k = 0; k < warmupSteps; k++) {
+        const uv = this.sampleUV(lon, lat);
+        if (!uv) break;
+        const [u, v] = uv;
+        const speedMs = Math.hypot(u, v);
+        if (speedMs < 0.15) break;
+        lastSpeedKmh = speedMs * 3.6;
+        const cosLat = Math.max(0.35, Math.cos((lat * Math.PI) / 180));
+        lon += (u * stepScale) / cosLat;
+        lat += v * stepScale;
+        trail.push([lon, lat]);
+      }
+    }
+
+    return { lon, lat, age, maxAge, trail, lastSpeedKmh };
   }
 
-  /**
-   * Bilinearly sample (u, v) in m/s at (lat, lon) from the active wind level grid.
-   */
   sampleUV(lon: number, lat: number): [number, number] | null {
     if (!this.windData) return null;
     return sampleWindUV(this.windData, this.level, lon, lat);
   }
 
   private updateLoopState(): void {
-    const shouldRun = Boolean(this.visible && this.map && this.windData && !this.destroyed);
+    const shouldRun = Boolean(
+      this.visible && this.map && this.windData && !this.destroyed
+    );
     if (shouldRun && this.animId === null) {
       this.tick();
     } else if (!shouldRun && this.animId !== null) {
@@ -153,7 +187,15 @@ export class WindStreamlineRenderer {
     }
   }
 
-  private destroyed = false;
+  private resolveRibbonRgb(speedKmh: number): string {
+    // Neutral pearl/charcoal airflow palette (avoids rain-radar blue!)
+    if (this.darkTheme) {
+      if (speedKmh >= 55) return "253, 224, 71"; // Gale gold
+      return this.level === "850hPa" ? "241, 245, 249" : "167, 243, 208";
+    }
+    if (speedKmh >= 55) return "180, 83, 9";
+    return this.level === "850hPa" ? "51, 65, 85" : "15, 118, 110";
+  }
 
   private tick = (): void => {
     if (this.destroyed || !this.visible || !this.map || !this.windData) {
@@ -161,17 +203,8 @@ export class WindStreamlineRenderer {
       return;
     }
 
-    if (!this.isMoving && this.particles.length > 0) {
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      const width = this.canvas.width / dpr;
-      const height = this.canvas.height / dpr;
-
-      // Fade previous trails smoothly via destination-in alpha decay
-      this.ctx.save();
-      this.ctx.globalCompositeOperation = "destination-in";
-      this.ctx.fillStyle = "rgba(0, 0, 0, 0.91)";
-      this.ctx.fillRect(0, 0, width, height);
-      this.ctx.restore();
+    if (!this.isMoving && this.streamlines.length > 0) {
+      this.clearCanvas();
 
       const bounds = this.map.getBounds();
       const w = Math.max(bounds.getWest(), this.windData.bbox.west);
@@ -180,71 +213,97 @@ export class WindStreamlineRenderer {
       const n = Math.min(bounds.getNorth(), this.windData.bbox.north);
 
       const zoom = this.map.getZoom();
-      // Scale step size smoothly with zoom so screen speed looks crisp from z=4..11
-      const degPerMeterScale = 0.00028 * Math.pow(2, 7 - zoom);
+      // Calm atmospheric drift (~2.6x gentler than rain-like streaks)
+      const degPerMeterScale = 0.000105 * Math.pow(2, 7 - zoom);
 
-      this.ctx.lineWidth = this.level === "850hPa" ? 1.55 : 1.35;
       this.ctx.lineCap = "round";
+      this.ctx.lineJoin = "round";
 
-      for (let i = 0; i < this.particles.length; i++) {
-        const p = this.particles[i];
-        if (p.age >= p.maxAge) {
-          this.particles[i] = this.randomParticle(w, s, e, n);
+      for (let i = 0; i < this.streamlines.length; i++) {
+        const sl = this.streamlines[i];
+        if (sl.age >= sl.maxAge) {
+          this.streamlines[i] = this.spawnStreamline(w, s, e, n, false);
           continue;
         }
-        const uv = this.sampleUV(p.lon, p.lat);
+
+        const uv = this.sampleUV(sl.lon, sl.lat);
         if (!uv) {
-          this.particles[i] = this.randomParticle(w, s, e, n);
+          this.streamlines[i] = this.spawnStreamline(w, s, e, n, false);
           continue;
         }
+
         const [u, v] = uv;
         const speedMs = Math.hypot(u, v);
         if (speedMs < 0.15) {
-          p.age += 2;
+          sl.age += 2;
           continue;
         }
 
-        const cosLat = Math.max(0.35, Math.cos((p.lat * Math.PI) / 180));
-        const nextLon = p.lon + (u * degPerMeterScale) / cosLat;
-        const nextLat = p.lat + v * degPerMeterScale;
+        sl.lastSpeedKmh = speedMs * 3.6;
+        const cosLat = Math.max(0.35, Math.cos((sl.lat * Math.PI) / 180));
+        sl.lon += (u * degPerMeterScale) / cosLat;
+        sl.lat += v * degPerMeterScale;
+        sl.age += 1;
 
-        const pt0 = this.map.project([p.lon, p.lat]);
-        const pt1 = this.map.project([nextLon, nextLat]);
-
-        // Colorize by speed, altitude mode, and light/dark basemap contrast
-        const speedKmh = speedMs * 3.6;
-        if (this.darkTheme) {
-          if (speedKmh >= 55) {
-            this.ctx.strokeStyle = "rgba(251, 191, 36, 0.88)";
-          } else if (speedKmh >= 30) {
-            this.ctx.strokeStyle =
-              this.level === "850hPa"
-                ? "rgba(125, 211, 252, 0.86)"
-                : "rgba(167, 243, 208, 0.84)";
-          } else {
-            this.ctx.strokeStyle = "rgba(226, 232, 240, 0.72)";
-          }
-        } else {
-          if (speedKmh >= 55) {
-            this.ctx.strokeStyle = "rgba(217, 119, 6, 0.9)";
-          } else if (speedKmh >= 30) {
-            this.ctx.strokeStyle =
-              this.level === "850hPa"
-                ? "rgba(2, 132, 199, 0.86)"
-                : "rgba(13, 148, 136, 0.84)";
-          } else {
-            this.ctx.strokeStyle = "rgba(51, 65, 85, 0.72)";
-          }
+        sl.trail.push([sl.lon, sl.lat]);
+        if (sl.trail.length > MAX_TRAIL_POINTS) {
+          sl.trail.shift();
         }
+        if (sl.trail.length < 3) continue;
 
+        // Smooth life envelope (fade in over first 14 frames, fade out over final 18 frames)
+        const fadeIn = Math.min(1, sl.age / 14);
+        const fadeOut = Math.min(1, (sl.maxAge - sl.age) / 18);
+        const lifeAlpha = fadeIn * fadeOut;
+        if (lifeAlpha <= 0.03) continue;
+
+        const pts = sl.trail.map((coord) => this.map!.project(coord));
+        const rgb = this.resolveRibbonRgb(sl.lastSpeedKmh);
+        const midIdx = Math.floor(pts.length * 0.45);
+
+        // Tail half: thin, soft fade
+        this.ctx.strokeStyle = `rgba(${rgb}, ${(0.22 * lifeAlpha).toFixed(3)})`;
+        this.ctx.lineWidth = 0.9;
         this.ctx.beginPath();
-        this.ctx.moveTo(pt0.x, pt0.y);
-        this.ctx.lineTo(pt1.x, pt1.y);
+        this.ctx.moveTo(pts[0].x, pts[0].y);
+        for (let k = 1; k <= midIdx; k++) {
+          this.ctx.lineTo(pts[k].x, pts[k].y);
+        }
         this.ctx.stroke();
 
-        p.lon = nextLon;
-        p.lat = nextLat;
-        p.age += 1;
+        // Fore-body: crisp curved wind ribbon
+        const headAlpha = (this.darkTheme ? 0.58 : 0.62) * lifeAlpha;
+        this.ctx.strokeStyle = `rgba(${rgb}, ${headAlpha.toFixed(3)})`;
+        this.ctx.lineWidth = this.level === "850hPa" ? 1.45 : 1.25;
+        this.ctx.beginPath();
+        this.ctx.moveTo(pts[midIdx].x, pts[midIdx].y);
+        for (let k = midIdx + 1; k < pts.length; k++) {
+          this.ctx.lineTo(pts[k].x, pts[k].y);
+        }
+        this.ctx.stroke();
+
+        // Subtle directional airflow chevron at the leading tip so direction is unmistakable
+        const head = pts[pts.length - 1];
+        const prev = pts[Math.max(0, pts.length - 4)];
+        const dx = head.x - prev.x;
+        const dy = head.y - prev.y;
+        const segLen = Math.hypot(dx, dy);
+        if (segLen >= 3.5) {
+          const angle = Math.atan2(dy, dx);
+          const wingLen = 4.2;
+          const wingSpread = 0.52;
+          this.ctx.beginPath();
+          this.ctx.moveTo(
+            head.x - wingLen * Math.cos(angle - wingSpread),
+            head.y - wingLen * Math.sin(angle - wingSpread)
+          );
+          this.ctx.lineTo(head.x, head.y);
+          this.ctx.lineTo(
+            head.x - wingLen * Math.cos(angle + wingSpread),
+            head.y - wingLen * Math.sin(angle + wingSpread)
+          );
+          this.ctx.stroke();
+        }
       }
     }
 

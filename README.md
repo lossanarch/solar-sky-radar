@@ -142,3 +142,22 @@ npm test
 ```
 
 Open `http://127.0.0.1:4791` to test `<solar-sky-radar-card>`, `<solar-sky-radar-card-editor>`, live HA sensor readouts, and instant region switching across **Melbourne, Sydney, Brisbane, Perth, Tokyo, London, and New York**.
+
+---
+
+## Cutting SemVer GitHub Releases (for HACS)
+
+Use `./scripts/release.sh` (or `npm run release -- <bump>`) to bump the version across `manifest.json`, `const.py`, `package.json`, and `pyproject.toml`, rebuild the bundled Lovelace card, run Vitest + Pytest, tag `vX.Y.Z`, and publish a GitHub Release with an attached manual-install `.zip`:
+
+```bash
+# Preview what a release will do without touching files or git
+npm run release -- patch --dry-run
+
+# Cut a patch, minor, major, or explicit SemVer release via gh CLI
+npm run release -- patch -y
+npm run release -- minor -y --notes "Add new satellite layer"
+npm run release -- 0.2.0 -y
+
+# Or push the commit + annotated tag only and let GitHub Actions (.github/workflows/release.yml) publish the release
+npm run release -- patch -y --tag-only
+```

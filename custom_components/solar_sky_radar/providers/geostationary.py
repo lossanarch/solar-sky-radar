@@ -251,9 +251,10 @@ def synthesize_cloud_overlays(
     Returns:
       - cloud_mask_rgba: (H, W, 4) uint8 clean white/grey visual cloud layer with transparent clear sky
       - solar_class_rgba: (H, W, 4) uint8 color-coded solar cloud impact overlay:
-          * Soft cyan-white: thin high cirrus (mild solar impact)
-          * Warm amber-gold: patchy low/mid cumulus (rapid solar ramping / intermittent)
-          * Deep violet-magenta: thick frontal/convective storm deck (steep solar drop)
+          * Bright sky-cyan: thin high cirrus / light veil (mild solar impact)
+          * Rich amber-gold: patchy/moderate low-mid cumulus (rapid solar ramping)
+          * Deep flame-orange: thick overcast deck (heavy solar attenuation)
+          * Vivid violet-magenta: cold convective/frontal storm deck (steep solar drop)
       - cloud_optical: (H, W) float32 [0..1] estimated cloud optical opacity
       - ir_coldness: (H, W) float32 [0..1] normalized cloud-top coldness
     """
@@ -315,42 +316,53 @@ def synthesize_cloud_overlays(
     cloud_mask_rgba[:, :, 3] = (alpha_clean * 255.0).astype(np.uint8)
 
     # 2. Solar Cloud Classification RGBA
-    # Compute 5x5 local spatial variance via fast box-filter integral to highlight patchy cumulus
-    pad = 3
+    # Compute 13x13 (~13-25km) spatial variance via fast integral image so whole patchy cumulus fields are recognized
+    pad = 6
     padded = np.pad(cloud_optical, pad, mode="edge")
     csum = np.pad(padded, ((1, 0), (1, 0)), mode="constant").cumsum(0).cumsum(1)
     k = 2 * pad + 1
     local_mean = (csum[k:, k:] - csum[:-k, k:] - csum[k:, :-k] + csum[:-k, :-k]) / float(k * k)
     sq_pad = np.pad(cloud_optical ** 2, pad, mode="edge")
     csum2 = np.pad(sq_pad, ((1, 0), (1, 0)), mode="constant").cumsum(0).cumsum(1)
-    local_var = np.maximum(0.0, (csum2[k:, k:] - csum2[:-k, k:] - csum2[k:, :-k] + csum2[:-k, :-k]) / float(k * k) - local_mean ** 2)
+    local_var = np.maximum(0.0, (csum2[k:, k:] - csum2[:-k, k:] - csum[k:, :-k] + csum[:-k, :-k]) / float(k * k) - local_mean ** 2)
     local_std = np.sqrt(local_var)
 
-    # Classification weights:
-    # - storm_w: thick optical + cold IR top -> deep convective/frontal drop (violet/magenta-red)
-    # - cirrus_w: cold IR top + modest visible optical -> thin high cirrus (ice cyan)
-    # - patchy_w: broken/moderate optical or high local edge texture -> intermittent PV ramping (amber)
-    storm_w = np.clip((cloud_optical - 0.56) / 0.32, 0.0, 1.0) * np.clip((ir_cold - 0.42) / 0.38, 0.25, 1.0)
-    cirrus_w = np.clip((ir_cold - 0.35) / 0.40, 0.0, 1.0) * np.clip(1.0 - (day_cloud - 0.15) / 0.42, 0.0, 1.0)
-    patchy_w = np.clip(local_std / 0.14, 0.0, 1.0) * (1.0 - 0.7 * storm_w)
-    overcast_w = np.clip(1.0 - storm_w - cirrus_w - patchy_w, 0.0, 1.0)
+    # Distinct, high-visibility 4-regime solar PV attenuation weights (never white-on-white over True Colour):
+    # - storm_w: thick optical + cold IR top -> severe PV drop (<15% output, vivid violet-magenta)
+    # - dense_w: optically thick low/mid deck -> heavy PV drop (15-35% output, deep flame-orange)
+    # - cirrus_w: thin veil or high cold cirrus -> mild PV dip (70-90% output, bright sky-cyan)
+    # - patchy_w: broken/moderate cumulus -> rapid PV ramping (35-70% output, rich solar amber-gold)
+    storm_w = np.clip((cloud_optical - 0.52) / 0.28, 0.0, 1.0) * np.clip((ir_cold - 0.38) / 0.36, 0.0, 1.0)
+    dense_w = np.clip((cloud_optical - 0.58) / 0.26, 0.0, 1.0) * np.clip(1.0 - 1.45 * storm_w, 0.0, 1.0)
+    cirrus_w = np.maximum(
+        np.clip((ir_cold - 0.30) / 0.38, 0.0, 1.0) * np.clip(1.0 - (day_cloud - 0.14) / 0.36, 0.0, 1.0),
+        np.clip(1.0 - (cloud_optical - 0.10) / 0.20, 0.0, 1.0) * np.clip((cloud_optical - 0.06) / 0.10, 0.0, 1.0),
+    ) * np.clip(1.0 - 1.45 * storm_w, 0.0, 1.0)
+    patchy_w = np.maximum(
+        np.clip(local_std / 0.11, 0.0, 1.0),
+        np.clip(1.0 - np.abs(cloud_optical - 0.38) / 0.24, 0.0, 1.0),
+    ) * np.clip(1.0 - 1.45 * storm_w, 0.0, 1.0) * np.clip(1.0 - 0.75 * dense_w, 0.0, 1.0)
 
-    total_w = np.maximum(storm_w + cirrus_w + patchy_w + overcast_w, 1e-4)
+    # Fallback residual defaults to warm amber-gold so moderate cloud interiors never wash out to white
+    residual_w = np.clip(1.0 - storm_w - dense_w - cirrus_w - patchy_w, 0.0, 1.0)
+    patchy_w = patchy_w + residual_w
+
+    total_w = np.maximum(storm_w + dense_w + cirrus_w + patchy_w, 1e-4)
     storm_w /= total_w
+    dense_w /= total_w
     cirrus_w /= total_w
     patchy_w /= total_w
-    overcast_w /= total_w
 
-    # Palette (R, G, B):
-    # Cirrus: (125, 226, 255) | Patchy: (255, 196, 77) | Overcast: (226, 232, 240) | Storm: (192, 92, 255)
-    sc_r = 125.0 * cirrus_w + 255.0 * patchy_w + 226.0 * overcast_w + 192.0 * storm_w
-    sc_g = 226.0 * cirrus_w + 196.0 * patchy_w + 232.0 * overcast_w + 92.0 * storm_w
-    sc_b = 255.0 * cirrus_w + 77.0 * patchy_w + 240.0 * overcast_w + 255.0 * storm_w
+    # High-contrast palette (R, G, B) clearly legible over both True Colour clouds & dark/light basemaps:
+    # Cirrus: (56, 217, 255) | Patchy Cumulus: (255, 180, 24) | Thick Deck: (249, 102, 32) | Storm: (196, 68, 255)
+    sc_r = 56.0 * cirrus_w + 255.0 * patchy_w + 249.0 * dense_w + 196.0 * storm_w
+    sc_g = 217.0 * cirrus_w + 180.0 * patchy_w + 102.0 * dense_w + 68.0 * storm_w
+    sc_b = 255.0 * cirrus_w + 24.0 * patchy_w + 32.0 * dense_w + 255.0 * storm_w
 
     solar_class_rgba = np.zeros((*cloud_optical.shape, 4), dtype=np.uint8)
     solar_class_rgba[:, :, 0] = np.clip(sc_r, 0, 255).astype(np.uint8)
     solar_class_rgba[:, :, 1] = np.clip(sc_g, 0, 255).astype(np.uint8)
     solar_class_rgba[:, :, 2] = np.clip(sc_b, 0, 255).astype(np.uint8)
-    solar_class_rgba[:, :, 3] = (np.clip(alpha_clean * 1.04, 0.0, 0.92) * 255.0).astype(np.uint8)
+    solar_class_rgba[:, :, 3] = (np.clip(alpha_clean * 0.96, 0.0, 0.88) * 255.0).astype(np.uint8)
 
     return cloud_mask_rgba, solar_class_rgba, cloud_optical, ir_cold.astype(np.float32)

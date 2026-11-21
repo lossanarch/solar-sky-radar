@@ -24,10 +24,10 @@ const DEFAULT_CONFIG: SolarSkyRadarCardConfig = {
   zoom_level: 7.2,
   map_height: 490,
   show_true_colour: true,
-  true_colour_opacity: 0.84,
-  show_cloud_overlay: true,
-  cloud_mode: "cloud_mask",
-  cloud_opacity: 0.78,
+  true_colour_opacity: 0.88,
+  show_cloud_overlay: false,
+  cloud_mode: "solar_cloud",
+  cloud_opacity: 0.58,
   show_radar: true,
   radar_opacity: 0.85,
   show_wind: true,
@@ -58,7 +58,8 @@ export class SolarSkyRadarCard extends LitElement {
   @state() private loading = true;
   @state() private errorMessage: string | null = null;
   @state() private hudExpanded = false;
-  @state() private mixerOpen = false;
+  @state() private layersOpen = false;
+  @state() private attribOpen = false;
 
   private mapController: MapController | null = null;
   private framePlayer: FramePlayer | null = null;
@@ -79,31 +80,38 @@ export class SolarSkyRadarCard extends LitElement {
 
       .card {
         --surface-bg: rgba(15, 23, 42, 0.86);
-        --surface-bg-hover: rgba(15, 23, 42, 0.94);
-        --surface-elevated: rgba(30, 41, 59, 0.88);
+        --surface-bg-hover: rgba(15, 23, 42, 0.95);
+        --surface-elevated: rgba(30, 41, 59, 0.9);
         --surface-border: rgba(148, 163, 184, 0.28);
         --text-strong: #f8fafc;
         --text-body: #cbd5e1;
         --text-muted: #94a3b8;
-        --eta-accent: #fcd34d;
-        --subchip-bg: rgba(30, 41, 59, 0.92);
-        --subchip-border: rgba(251, 191, 36, 0.55);
+        --eta-accent: #fbbf24;
+        --subchip-bg: rgba(245, 158, 11, 0.2);
+        --subchip-border: rgba(251, 191, 36, 0.6);
         --subchip-text: #fde68a;
 
-        position: relative;
+        background: #0b1120;
         border-radius: var(--ha-card-border-radius, 14px);
         overflow: hidden;
-        background: #0b1120;
-        border: 1px solid var(--ha-card-border-color, rgba(148, 163, 184, 0.22));
-        box-shadow: var(--ha-card-box-shadow, 0 8px 26px rgba(0, 0, 0, 0.22));
+        border: 1px solid var(--divider-color, rgba(148, 163, 184, 0.2));
+        box-shadow: var(--ha-card-box-shadow, 0 6px 24px rgba(0, 0, 0, 0.22));
+        position: relative;
+        font-family: var(
+          --paper-font-body1_-_font-family,
+          -apple-system,
+          BlinkMacSystemFont,
+          "Segoe UI",
+          Roboto,
+          sans-serif
+        );
         color: var(--text-strong);
-        font-family: var(--paper-font-body1_-_font-family, system-ui, -apple-system, sans-serif);
       }
 
       .card[data-theme="light"] {
         --surface-bg: rgba(255, 255, 255, 0.9);
-        --surface-bg-hover: rgba(255, 255, 255, 0.97);
-        --surface-elevated: rgba(241, 245, 249, 0.94);
+        --surface-bg-hover: rgba(255, 255, 255, 0.98);
+        --surface-elevated: rgba(241, 245, 249, 0.95);
         --surface-border: rgba(15, 23, 42, 0.16);
         --text-strong: #0f172a;
         --text-body: #334155;
@@ -112,7 +120,7 @@ export class SolarSkyRadarCard extends LitElement {
         --subchip-bg: rgba(254, 243, 199, 0.95);
         --subchip-border: rgba(217, 119, 6, 0.5);
         --subchip-text: #92400e;
-        background: #f1f5f9;
+        background: #e2e8f0;
       }
 
       .viewport {
@@ -125,198 +133,23 @@ export class SolarSkyRadarCard extends LitElement {
         inset: 0;
       }
 
-      /* Top-left compact Zoom & Recenter stack */
-      .nav-stack {
-        position: absolute;
-        left: 10px;
-        top: 10px;
-        z-index: 6;
-        display: flex;
-        flex-direction: column;
-        gap: 4px;
-      }
-
-      button.nav-btn {
-        appearance: none;
-        width: 30px;
-        height: 30px;
-        border-radius: 8px;
-        border: 1px solid var(--surface-border);
-        background: var(--surface-bg);
-        backdrop-filter: blur(10px);
-        -webkit-backdrop-filter: blur(10px);
-        color: var(--text-strong);
-        font-size: 15px;
-        font-weight: 700;
-        cursor: pointer;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        box-shadow: 0 2px 8px rgba(15, 23, 42, 0.15);
-      }
-
-      button.nav-btn:hover {
-        border-color: #0284c7;
-        background: var(--surface-bg-hover);
-      }
-
-      /* Top-right Quick Layer Switcher (unobstructed across top width) */
-      .layer-dock {
-        position: absolute;
-        top: 10px;
-        right: 10px;
-        left: 48px;
-        z-index: 6;
-        display: flex;
-        flex-direction: column;
-        align-items: flex-end;
-        gap: 5px;
-        pointer-events: none;
-      }
-
-      .chip-group {
-        display: flex;
-        flex-wrap: wrap;
-        justify-content: flex-end;
-        gap: 4px;
-        pointer-events: auto;
-      }
-
-      button.chip {
-        appearance: none;
-        border: 1px solid var(--surface-border);
-        background: var(--surface-bg);
-        backdrop-filter: blur(10px);
-        -webkit-backdrop-filter: blur(10px);
-        color: var(--text-body);
-        border-radius: 999px;
-        padding: 4px 9px;
-        font-size: 11px;
-        font-weight: 600;
-        cursor: pointer;
-        transition: all 0.14s ease;
-        white-space: nowrap;
-        box-shadow: 0 2px 6px rgba(15, 23, 42, 0.12);
-      }
-
-      button.chip:hover {
-        border-color: #0284c7;
-        color: var(--text-strong);
-      }
-
-      button.chip.active {
-        background: #0284c7;
-        border-color: #0284c7;
-        color: #ffffff;
-      }
-
-      button.chip.sub-mode {
-        background: var(--subchip-bg);
-        border-color: var(--subchip-border);
-        color: var(--subchip-text);
-      }
-
-      /* Opacity Mixer Popover */
-      .mixer-panel {
-        pointer-events: auto;
-        background: var(--surface-bg-hover);
-        backdrop-filter: blur(14px);
-        -webkit-backdrop-filter: blur(14px);
-        border: 1px solid var(--surface-border);
-        border-radius: 10px;
-        padding: 9px 11px;
-        width: 196px;
-        display: flex;
-        flex-direction: column;
-        gap: 7px;
-        font-size: 11px;
-        color: var(--text-strong);
-        box-shadow: 0 6px 18px rgba(15, 23, 42, 0.22);
-      }
-
-      .mixer-row {
-        display: flex;
-        flex-direction: column;
-        gap: 2px;
-      }
-
-      .mixer-row input[type="range"] {
-        width: 100%;
-        accent-color: #0284c7;
-      }
-
-      /* Coordinated Bottom Dock positioned cleanly ABOVE MapLibre's OpenStreetMap attribution strip */
-      .bottom-dock {
-        position: absolute;
-        left: 10px;
-        right: 10px;
-        bottom: 30px;
-        z-index: 6;
-        display: flex;
-        flex-wrap: wrap;
-        align-items: flex-end;
-        justify-content: space-between;
-        gap: 8px;
-        pointer-events: none;
-      }
-
-      .legend-strip {
-        pointer-events: auto;
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        gap: 8px;
-        padding: 5px 9px;
-        border-radius: 8px;
-        background: var(--surface-bg);
-        backdrop-filter: blur(10px);
-        -webkit-backdrop-filter: blur(10px);
-        border: 1px solid var(--surface-border);
-        font-size: 10.5px;
-        color: var(--text-body);
-        box-shadow: 0 2px 8px rgba(15, 23, 42, 0.14);
-      }
-
-      .legend-item {
-        display: inline-flex;
-        align-items: center;
-        gap: 4px;
-      }
-
-      .swatch {
-        width: 9px;
-        height: 9px;
-        border-radius: 2px;
-      }
-
-      .radar-ramp {
-        width: 54px;
-        height: 7px;
-        border-radius: 999px;
-        background: linear-gradient(
-          90deg,
-          #38bdf8 0%,
-          #22c55e 35%,
-          #facc15 62%,
-          #ef4444 84%,
-          #c026d3 100%
-        );
-      }
-
-      /* Bottom-right Solar Sky Nowcast HUD (sits directly above OpenStreetMap banner, expands upward) */
+      /* Top-left Solar HUD — never collides with the single top-right Layers pill */
       .solar-hud {
-        pointer-events: auto;
-        margin-left: auto;
-        max-width: min(355px, 100%);
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        max-width: min(350px, calc(100% - 118px));
+        z-index: 6;
         background: var(--surface-bg);
-        backdrop-filter: blur(12px);
-        -webkit-backdrop-filter: blur(12px);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
         border: 1px solid var(--surface-border);
-        border-radius: 11px;
+        border-radius: 12px;
         padding: 7px 11px;
         cursor: pointer;
-        box-shadow: 0 4px 14px rgba(15, 23, 42, 0.18);
+        user-select: none;
         transition: border-color 0.15s ease, background 0.15s ease;
+        box-shadow: 0 3px 12px rgba(15, 23, 42, 0.18);
       }
 
       .solar-hud:hover {
@@ -327,35 +160,37 @@ export class SolarSkyRadarCard extends LitElement {
       .hud-header {
         display: flex;
         align-items: center;
-        gap: 8px;
+        gap: 7px;
       }
 
       .regime-dot {
-        width: 10px;
-        height: 10px;
-        border-radius: 50%;
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
         flex-shrink: 0;
       }
 
       .regime-clear_reliable {
-        background: #10b981;
-        box-shadow: 0 0 7px rgba(16, 185, 129, 0.75);
+        background: #16a34a;
+        box-shadow: 0 0 8px rgba(22, 163, 74, 0.6);
       }
-      .regime-thin_high_cloud,
-      .regime-partly_cloudy {
-        background: #0ea5e9;
-        box-shadow: 0 0 7px rgba(14, 165, 233, 0.7);
+      .regime-mostly_clear {
+        background: #65a30d;
+      }
+      .regime-thin_high_cirrus {
+        background: #0284c7;
       }
       .regime-patchy_unreliable {
         background: #f59e0b;
-        box-shadow: 0 0 7px rgba(245, 158, 11, 0.75);
+        box-shadow: 0 0 8px rgba(245, 158, 11, 0.6);
       }
-      .regime-storm_approaching,
-      .regime-storm_overhead {
-        background: #a855f7;
-        box-shadow: 0 0 9px rgba(168, 85, 247, 0.85);
+      .regime-overcast_steady {
+        background: #64748b;
       }
-      .regime-overcast_low,
+      .regime-storm_approaching {
+        background: #c026d3;
+        box-shadow: 0 0 8px rgba(192, 38, 211, 0.65);
+      }
       .regime-unknown {
         background: #94a3b8;
       }
@@ -365,12 +200,23 @@ export class SolarSkyRadarCard extends LitElement {
         font-weight: 700;
         line-height: 1.25;
         color: var(--text-strong);
+        flex: 1;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .hud-chevron {
+        font-size: 10px;
+        color: var(--text-muted);
+        flex-shrink: 0;
       }
 
       .hud-metrics {
         display: flex;
         flex-wrap: wrap;
-        gap: 8px;
+        gap: 7px;
         margin-top: 3px;
         font-size: 11px;
         color: var(--text-body);
@@ -387,9 +233,9 @@ export class SolarSkyRadarCard extends LitElement {
       }
 
       .hud-expanded {
-        margin-bottom: 7px;
-        padding-bottom: 7px;
-        border-bottom: 1px solid var(--surface-border);
+        margin-top: 7px;
+        padding-top: 7px;
+        border-top: 1px solid var(--surface-border);
         font-size: 11.5px;
         color: var(--text-body);
         line-height: 1.4;
@@ -432,11 +278,299 @@ export class SolarSkyRadarCard extends LitElement {
         background: linear-gradient(90deg, #f59e0b, #0ea5e9);
       }
 
+      /* Top-right single Layers pill + collapsible popover */
+      .layer-dock {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        z-index: 7;
+        display: flex;
+        flex-direction: column;
+        align-items: flex-end;
+        gap: 6px;
+      }
+
+      button.layers-pill {
+        appearance: none;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        border: 1px solid var(--surface-border);
+        background: var(--surface-bg);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        color: var(--text-strong);
+        border-radius: 999px;
+        padding: 6px 12px;
+        font-size: 11.5px;
+        font-weight: 700;
+        cursor: pointer;
+        box-shadow: 0 3px 10px rgba(15, 23, 42, 0.18);
+        transition: all 0.14s ease;
+      }
+
+      button.layers-pill:hover {
+        border-color: #0284c7;
+        background: var(--surface-bg-hover);
+      }
+
+      button.layers-pill.open {
+        background: rgba(2, 132, 199, 0.92);
+        border-color: #0284c7;
+        color: #ffffff;
+      }
+
+      .layers-count {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-width: 17px;
+        height: 17px;
+        padding: 0 5px;
+        border-radius: 999px;
+        font-size: 10.5px;
+        font-weight: 700;
+        background: rgba(14, 165, 233, 0.22);
+        color: var(--text-strong);
+        font-variant-numeric: tabular-nums;
+      }
+
+      button.layers-pill.open .layers-count {
+        background: rgba(255, 255, 255, 0.24);
+        color: #ffffff;
+      }
+
+      .layers-popover {
+        width: min(268px, calc(100vw - 24px));
+        background: var(--surface-bg-hover);
+        backdrop-filter: blur(14px);
+        -webkit-backdrop-filter: blur(14px);
+        border: 1px solid var(--surface-border);
+        border-radius: 12px;
+        padding: 10px 11px;
+        box-shadow: 0 10px 28px rgba(15, 23, 42, 0.28);
+        display: flex;
+        flex-direction: column;
+        gap: 9px;
+      }
+
+      .popover-section-label {
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        text-transform: uppercase;
+        color: var(--text-muted);
+      }
+
+      .chip-group {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 5px;
+      }
+
+      button.chip {
+        appearance: none;
+        border: 1px solid var(--surface-border);
+        background: var(--surface-elevated);
+        color: var(--text-body);
+        border-radius: 999px;
+        padding: 4px 10px;
+        font-size: 11px;
+        font-weight: 600;
+        cursor: pointer;
+        transition: all 0.14s ease;
+        white-space: nowrap;
+      }
+
+      button.chip:hover {
+        border-color: #0284c7;
+        color: var(--text-strong);
+      }
+
+      button.chip.active {
+        background: rgba(2, 132, 199, 0.9);
+        border-color: #0284c7;
+        color: #ffffff;
+      }
+
+      button.chip.sub-mode {
+        background: var(--subchip-bg);
+        border-color: var(--subchip-border);
+        color: var(--subchip-text);
+      }
+
+      .mixer-group {
+        border-top: 1px solid var(--surface-border);
+        padding-top: 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+      }
+
+      .mixer-row {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+        font-size: 11px;
+        color: var(--text-body);
+      }
+
+      .mixer-row input[type="range"] {
+        width: 100%;
+        accent-color: #0284c7;
+        height: 4px;
+        cursor: pointer;
+      }
+
+      /* Bottom-left Legend Strip — stays flush at bottom without being bumped up */
+      .legend-strip {
+        position: absolute;
+        left: 10px;
+        bottom: 10px;
+        max-width: calc(100% - 54px);
+        z-index: 5;
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 7px;
+        background: var(--surface-bg);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        border: 1px solid var(--surface-border);
+        border-radius: 9px;
+        padding: 4px 8px;
+        font-size: 10.5px;
+        color: var(--text-body);
+        pointer-events: none;
+        box-shadow: 0 2px 8px rgba(15, 23, 42, 0.14);
+      }
+
+      .legend-item {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+      }
+
+      .swatch {
+        width: 9px;
+        height: 9px;
+        border-radius: 2px;
+      }
+
+      .radar-ramp {
+        width: 38px;
+        height: 7px;
+        border-radius: 3px;
+        background: linear-gradient(
+          90deg,
+          #38bdf8 0%,
+          #22c55e 34%,
+          #facc15 62%,
+          #ef4444 84%,
+          #c084fc 100%
+        );
+      }
+
+      /* Bottom-right compact Zoom/Recenter stack + minimal collapsed-by-default attribution */
+      .nav-stack {
+        position: absolute;
+        right: 8px;
+        bottom: 34px;
+        z-index: 5;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+      }
+
+      button.nav-btn {
+        appearance: none;
+        width: 28px;
+        height: 28px;
+        border-radius: 8px;
+        border: 1px solid var(--surface-border);
+        background: var(--surface-bg);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        color: var(--text-strong);
+        font-size: 14px;
+        font-weight: 700;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        box-shadow: 0 2px 8px rgba(15, 23, 42, 0.15);
+      }
+
+      button.nav-btn:hover {
+        border-color: #0284c7;
+        background: var(--surface-bg-hover);
+      }
+
+      .attrib-box {
+        position: absolute;
+        right: 8px;
+        bottom: 8px;
+        z-index: 6;
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+      }
+
+      .attrib-links {
+        background: var(--surface-bg-hover);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        border: 1px solid var(--surface-border);
+        border-radius: 999px;
+        padding: 2px 8px;
+        font-size: 10px;
+        color: var(--text-muted);
+        white-space: nowrap;
+        box-shadow: 0 2px 6px rgba(15, 23, 42, 0.14);
+      }
+
+      .attrib-links a {
+        color: var(--text-body);
+        text-decoration: none;
+      }
+
+      .attrib-links a:hover {
+        text-decoration: underline;
+      }
+
+      button.attrib-btn {
+        appearance: none;
+        width: 20px;
+        height: 20px;
+        border-radius: 999px;
+        border: 1px solid var(--surface-border);
+        background: var(--surface-bg);
+        color: var(--text-muted);
+        font-size: 11px;
+        font-weight: 700;
+        font-style: italic;
+        font-family: Georgia, serif;
+        line-height: 1;
+        cursor: pointer;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        opacity: 0.72;
+        transition: opacity 0.14s ease, border-color 0.14s ease;
+      }
+
+      button.attrib-btn:hover,
+      button.attrib-btn.open {
+        opacity: 1;
+        border-color: #0284c7;
+        color: var(--text-strong);
+      }
+
       /* Loading & Error Banners */
       .status-banner {
         position: absolute;
         left: 50%;
-        top: 52px;
+        top: 56px;
         transform: translateX(-50%);
         z-index: 7;
         background: var(--surface-bg-hover);
@@ -459,20 +593,14 @@ export class SolarSkyRadarCard extends LitElement {
         color: #fecaca;
       }
 
-      /* Ensure MapLibre compact attribution sits neatly in its dedicated bottom-right lane */
-      .maplibregl-ctrl-bottom-right {
-        z-index: 5;
-      }
-
-      @media (max-width: 600px) {
-        .bottom-dock {
-          flex-direction: column;
-          align-items: stretch;
-          gap: 6px;
-        }
+      @media (max-width: 520px) {
         .solar-hud {
-          margin-left: 0;
-          max-width: 100%;
+          max-width: calc(100% - 108px);
+          padding: 6px 9px;
+        }
+        .hud-metrics {
+          gap: 5px;
+          font-size: 10.5px;
         }
       }
     `,
@@ -488,7 +616,6 @@ export class SolarSkyRadarCard extends LitElement {
 
   connectedCallback(): void {
     super.connectedCallback();
-    // Reset single-play trigger on fresh view/tab mount so opening the view plays once when >=75% visible
     this.hasPlayedSingleOnReveal = false;
     this.userPausedWhileVisible = false;
   }
@@ -517,10 +644,11 @@ export class SolarSkyRadarCard extends LitElement {
 
     this.speed = this.config.playback_speed ?? 1;
     this.mapController?.updateConfig(this.config);
+    this.framePlayer?.setEntryId(this.config.entry_id);
     this.framePlayer?.setLayerFlags({
       trueColour: this.config.show_true_colour ?? true,
-      cloudOverlay: this.config.show_cloud_overlay ?? true,
-      cloudMode: this.config.cloud_mode ?? "cloud_mask",
+      cloudOverlay: this.config.show_cloud_overlay ?? false,
+      cloudMode: this.config.cloud_mode ?? "solar_cloud",
       radar: this.config.show_radar ?? true,
     });
     this.framePlayer?.setSpeed(this.speed);
@@ -541,7 +669,14 @@ export class SolarSkyRadarCard extends LitElement {
     if (!mapEl) return;
 
     this.lastDarkResolved = resolveIsDark(this.config.basemap_theme, this.hass);
-    this.mapController = new MapController(mapEl, () => this.hass);
+    this.mapController = new MapController(
+      mapEl,
+      () => this.hass,
+      () => {
+        if (this.layersOpen) this.layersOpen = false;
+        if (this.attribOpen) this.attribOpen = false;
+      }
+    );
     this.mapController.init(this.config);
 
     this.framePlayer = new FramePlayer(
@@ -557,10 +692,11 @@ export class SolarSkyRadarCard extends LitElement {
         this.playing = isPlaying;
       }
     );
+    this.framePlayer.setEntryId(this.config.entry_id);
     this.framePlayer.setLayerFlags({
       trueColour: this.config.show_true_colour ?? true,
-      cloudOverlay: this.config.show_cloud_overlay ?? true,
-      cloudMode: this.config.cloud_mode ?? "cloud_mask",
+      cloudOverlay: this.config.show_cloud_overlay ?? false,
+      cloudMode: this.config.cloud_mode ?? "solar_cloud",
       radar: this.config.show_radar ?? true,
     });
     this.framePlayer.setSpeed(this.speed);
@@ -700,7 +836,7 @@ export class SolarSkyRadarCard extends LitElement {
 
   private cycleCloudMode(): void {
     const next: CloudRenderMode =
-      (this.config.cloud_mode ?? "cloud_mask") === "cloud_mask"
+      (this.config.cloud_mode ?? "solar_cloud") === "cloud_mask"
         ? "solar_cloud"
         : "cloud_mask";
     this.setConfig({ ...this.config, show_cloud_overlay: true, cloud_mode: next });
@@ -710,6 +846,19 @@ export class SolarSkyRadarCard extends LitElement {
     const next: WindAltitudeMode =
       (this.config.wind_level ?? "850hPa") === "850hPa" ? "10m" : "850hPa";
     this.setConfig({ ...this.config, show_wind: true, wind_level: next });
+  }
+
+  private activeLayerCount(): number {
+    const flags = [
+      this.config.show_true_colour ?? true,
+      this.config.show_cloud_overlay ?? false,
+      this.config.show_radar ?? true,
+      this.config.show_wind ?? true,
+      this.config.show_lightning ?? true,
+      this.config.show_fires ?? true,
+      this.config.show_solar_rings ?? true,
+    ];
+    return flags.filter(Boolean).length;
   }
 
   private renderSolarHud() {
@@ -736,6 +885,28 @@ export class SolarSkyRadarCard extends LitElement {
           this.hudExpanded = !this.hudExpanded;
         }}
       >
+        <div class="hud-header">
+          <span class="regime-dot regime-${solar.regime}"></span>
+          <span class="hud-title">${titlePrefix}${solar.regime_label}</span>
+          <span class="hud-chevron">${this.hudExpanded ? "▴" : "▾"}</span>
+        </div>
+        <div class="hud-metrics">
+          <span class="hud-metric">
+            Solar <strong>~${solar.estimated_transmittance_pct}%</strong>
+          </span>
+          <span class="hud-metric">
+            Cloud <strong>${Math.round(solar.local_cloud_cover_pct)}%</strong>
+          </span>
+          <span class="hud-metric">
+            Patchiness <strong>${Math.round(solar.patchiness_index)}</strong>/100
+          </span>
+          ${solar.approaching_cloud_eta_min !== null
+            ? html`<span class="hud-metric hud-eta">
+                Drop ETA <strong>~${solar.approaching_cloud_eta_min}m</strong>
+              </span>`
+            : nothing}
+        </div>
+
         ${this.hudExpanded
           ? html`
               <div class="hud-expanded">
@@ -768,27 +939,6 @@ export class SolarSkyRadarCard extends LitElement {
               </div>
             `
           : nothing}
-
-        <div class="hud-header">
-          <span class="regime-dot regime-${solar.regime}"></span>
-          <span class="hud-title">${titlePrefix}${solar.regime_label}</span>
-        </div>
-        <div class="hud-metrics">
-          <span class="hud-metric">
-            Solar <strong>~${solar.estimated_transmittance_pct}%</strong>
-          </span>
-          <span class="hud-metric">
-            Cloud <strong>${Math.round(solar.local_cloud_cover_pct)}%</strong>
-          </span>
-          <span class="hud-metric">
-            Patchiness <strong>${Math.round(solar.patchiness_index)}</strong>/100
-          </span>
-          ${solar.approaching_cloud_eta_min !== null
-            ? html`<span class="hud-metric hud-eta">
-                Drop ETA <strong>~${solar.approaching_cloud_eta_min}m</strong>
-              </span>`
-            : nothing}
-        </div>
       </div>
     `;
   }
@@ -796,8 +946,8 @@ export class SolarSkyRadarCard extends LitElement {
   private renderLegend() {
     if (!(this.config.show_legend ?? true)) return nothing;
     const isSolarMode =
-      (this.config.show_cloud_overlay ?? true) &&
-      this.config.cloud_mode === "solar_cloud";
+      (this.config.show_cloud_overlay ?? false) &&
+      (this.config.cloud_mode ?? "solar_cloud") === "solar_cloud";
     const fireCount = this.hazards?.fires?.features?.length ?? 0;
     const ltgCount = this.hazards?.lightning?.meta?.count_2h ?? 0;
     const hasRadar = this.config.show_radar ?? true;
@@ -819,13 +969,16 @@ export class SolarSkyRadarCard extends LitElement {
         ${isSolarMode
           ? html`
               <span class="legend-item">
-                <span class="swatch" style="background:#7de2ff;"></span>Cirrus
+                <span class="swatch" style="background:#38d9ff;"></span>Cirrus
               </span>
               <span class="legend-item">
-                <span class="swatch" style="background:#ffc44d;"></span>Patchy
+                <span class="swatch" style="background:#ffb418;"></span>Patchy
               </span>
               <span class="legend-item">
-                <span class="swatch" style="background:#c05cff;"></span>Storm Deck
+                <span class="swatch" style="background:#f96620;"></span>Thick
+              </span>
+              <span class="legend-item">
+                <span class="swatch" style="background:#c444ff;"></span>Storm
               </span>
             `
           : nothing}
@@ -855,17 +1008,231 @@ export class SolarSkyRadarCard extends LitElement {
     `;
   }
 
+  private renderAttribution() {
+    const bm = this.config.basemap_theme ?? "auto";
+    const isBom = bm === "bom_dark" || bm === "bom_light";
+
+    return html`
+      <div class="attrib-box">
+        ${this.attribOpen
+          ? html`
+              <span class="attrib-links">
+                ${isBom
+                  ? html`© Australian Bureau of Meteorology`
+                  : html`<a
+                        href="https://openfreemap.org"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        >OpenFreeMap</a
+                      >
+                      · ©
+                      <a
+                        href="https://openmaptiles.org"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        >OpenMapTiles</a
+                      >
+                      · ©
+                      <a
+                        href="https://www.openstreetmap.org/copyright"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        >OpenStreetMap</a
+                      >`}
+              </span>
+            `
+          : nothing}
+        <button
+          class="attrib-btn ${this.attribOpen ? "open" : ""}"
+          type="button"
+          title="Map & satellite data attribution"
+          aria-label="Map attribution"
+          @click=${() => {
+            this.attribOpen = !this.attribOpen;
+          }}
+        >
+          i
+        </button>
+      </div>
+    `;
+  }
+
   render() {
     const height = this.config.map_height ?? 490;
+    const cloudMode = this.config.cloud_mode ?? "solar_cloud";
     const cloudModeLabel =
-      this.config.cloud_mode === "solar_cloud" ? "Solar Class" : "Visual Mask";
+      cloudMode === "solar_cloud" ? "Mode: Solar Impact" : "Mode: Clean Mask";
     const windLevel = this.config.wind_level ?? "850hPa";
     const isDark = resolveIsDark(this.config.basemap_theme, this.hass);
+    const activeCount = this.activeLayerCount();
 
     return html`
       <div class="card" data-theme=${isDark ? "dark" : "light"}>
         <div class="viewport" style="height: ${height}px;">
           <div class="map-canvas"></div>
+
+          ${this.renderSolarHud()}
+
+          <div class="layer-dock">
+            <button
+              class="layers-pill ${this.layersOpen ? "open" : ""}"
+              type="button"
+              title="Show or hide map overlay controls"
+              @click=${() => {
+                this.layersOpen = !this.layersOpen;
+              }}
+            >
+              <span>Layers</span>
+              <span class="layers-count">${activeCount}</span>
+            </button>
+
+            ${this.layersOpen
+              ? html`
+                  <div class="layers-popover">
+                    <div class="popover-section-label">Active Overlays</div>
+                    <div class="chip-group">
+                      <button
+                        class="chip ${(this.config.show_true_colour ?? true) ? "active" : ""}"
+                        title="Toggle Himawari-9 / GeoColor Visible True Colour"
+                        @click=${() => this.toggleFlag("show_true_colour", true)}
+                      >
+                        True Colour
+                      </button>
+                      <button
+                        class="chip ${(this.config.show_cloud_overlay ?? false) ? "active" : ""}"
+                        title="Toggle Visual / Solar Cloud Overlay"
+                        @click=${() => this.toggleFlag("show_cloud_overlay", false)}
+                      >
+                        Clouds
+                      </button>
+                      ${this.config.show_cloud_overlay ?? false
+                        ? html`
+                            <button
+                              class="chip sub-mode"
+                              title="Switch between Solar Cloud Classification and Clean Cloud Mask"
+                              @click=${this.cycleCloudMode}
+                            >
+                              ${cloudModeLabel}
+                            </button>
+                          `
+                        : nothing}
+                      <button
+                        class="chip ${(this.config.show_radar ?? true) ? "active" : ""}"
+                        title="Toggle Rain Radar"
+                        @click=${() => this.toggleFlag("show_radar", true)}
+                      >
+                        Rain
+                      </button>
+                      <button
+                        class="chip ${(this.config.show_wind ?? true) ? "active" : ""}"
+                        title="Toggle Curved Wind Streamlines"
+                        @click=${() => this.toggleFlag("show_wind", true)}
+                      >
+                        Wind
+                      </button>
+                      ${this.config.show_wind ?? true
+                        ? html`
+                            <button
+                              class="chip sub-mode"
+                              title="Switch between 850 hPa Cloud-Steering Wind and 10 m Surface Wind"
+                              @click=${this.cycleWindLevel}
+                            >
+                              ${windLevel}
+                            </button>
+                          `
+                        : nothing}
+                      <button
+                        class="chip ${(this.config.show_lightning ?? true) ? "active" : ""}"
+                        title="Toggle Blitzortung Lightning"
+                        @click=${() => this.toggleFlag("show_lightning", true)}
+                      >
+                        Lightning
+                      </button>
+                      <button
+                        class="chip ${(this.config.show_fires ?? true) ? "active" : ""}"
+                        title="Toggle NASA FIRMS & DEA Bushfire Hotspots"
+                        @click=${() => this.toggleFlag("show_fires", true)}
+                      >
+                        FIRMS
+                      </button>
+                      <button
+                        class="chip ${(this.config.show_solar_rings ?? true) ? "active" : ""}"
+                        title="Toggle 15m (blue) / 30m (amber) / 60m (red) Upwind Cloud Arrival Arcs"
+                        @click=${() => this.toggleFlag("show_solar_rings", true)}
+                      >
+                        ETA Rings
+                      </button>
+                    </div>
+
+                    <div class="mixer-group">
+                      <div class="popover-section-label">Layer Opacity</div>
+                      <div class="mixer-row">
+                        <span
+                          >True Colour
+                          (${Math.round((this.config.true_colour_opacity ?? 0.88) * 100)}%)</span
+                        >
+                        <input
+                          type="range"
+                          min="0.1"
+                          max="1"
+                          step="0.05"
+                          .value=${String(this.config.true_colour_opacity ?? 0.88)}
+                          @input=${(e: Event) =>
+                            this.setConfig({
+                              ...this.config,
+                              true_colour_opacity: Number(
+                                (e.target as HTMLInputElement).value
+                              ),
+                            })}
+                        />
+                      </div>
+                      <div class="mixer-row">
+                        <span
+                          >Cloud Overlay
+                          (${Math.round((this.config.cloud_opacity ?? 0.58) * 100)}%)</span
+                        >
+                        <input
+                          type="range"
+                          min="0.1"
+                          max="1"
+                          step="0.05"
+                          .value=${String(this.config.cloud_opacity ?? 0.58)}
+                          @input=${(e: Event) =>
+                            this.setConfig({
+                              ...this.config,
+                              cloud_opacity: Number(
+                                (e.target as HTMLInputElement).value
+                              ),
+                            })}
+                        />
+                      </div>
+                      <div class="mixer-row">
+                        <span
+                          >Rain Radar
+                          (${Math.round((this.config.radar_opacity ?? 0.85) * 100)}%)</span
+                        >
+                        <input
+                          type="range"
+                          min="0.1"
+                          max="1"
+                          step="0.05"
+                          .value=${String(this.config.radar_opacity ?? 0.85)}
+                          @input=${(e: Event) =>
+                            this.setConfig({
+                              ...this.config,
+                              radar_opacity: Number(
+                                (e.target as HTMLInputElement).value
+                              ),
+                            })}
+                        />
+                      </div>
+                    </div>
+                  </div>
+                `
+              : nothing}
+          </div>
+
+          ${this.renderLegend()}
 
           <div class="nav-stack">
             <button
@@ -891,162 +1258,7 @@ export class SolarSkyRadarCard extends LitElement {
             </button>
           </div>
 
-          <div class="layer-dock">
-            <div class="chip-group">
-              <button
-                class="chip ${(this.config.show_true_colour ?? true) ? "active" : ""}"
-                title="Toggle Himawari-9 / GeoColor Visible True Colour"
-                @click=${() => this.toggleFlag("show_true_colour", true)}
-              >
-                True Colour
-              </button>
-              <button
-                class="chip ${(this.config.show_cloud_overlay ?? true) ? "active" : ""}"
-                title="Toggle Visual Cloud Overlay"
-                @click=${() => this.toggleFlag("show_cloud_overlay", true)}
-              >
-                Clouds
-              </button>
-              ${this.config.show_cloud_overlay ?? true
-                ? html`
-                    <button
-                      class="chip sub-mode"
-                      title="Switch between Clean Cloud Mask and Solar Cloud Classification"
-                      @click=${this.cycleCloudMode}
-                    >
-                      ${cloudModeLabel}
-                    </button>
-                  `
-                : nothing}
-              <button
-                class="chip ${(this.config.show_radar ?? true) ? "active" : ""}"
-                title="Toggle Rain Radar"
-                @click=${() => this.toggleFlag("show_radar", true)}
-              >
-                Rain
-              </button>
-              <button
-                class="chip ${(this.config.show_wind ?? true) ? "active" : ""}"
-                title="Toggle Animated Wind Streamlines"
-                @click=${() => this.toggleFlag("show_wind", true)}
-              >
-                Wind
-              </button>
-              ${this.config.show_wind ?? true
-                ? html`
-                    <button
-                      class="chip sub-mode"
-                      title="Switch between 850 hPa Cloud-Steering Wind and 10 m Surface Wind"
-                      @click=${this.cycleWindLevel}
-                    >
-                      ${windLevel}
-                    </button>
-                  `
-                : nothing}
-              <button
-                class="chip ${(this.config.show_lightning ?? true) ? "active" : ""}"
-                title="Toggle Blitzortung Lightning"
-                @click=${() => this.toggleFlag("show_lightning", true)}
-              >
-                Lightning
-              </button>
-              <button
-                class="chip ${(this.config.show_fires ?? true) ? "active" : ""}"
-                title="Toggle NASA FIRMS & DEA Bushfire Hotspots"
-                @click=${() => this.toggleFlag("show_fires", true)}
-              >
-                FIRMS
-              </button>
-              <button
-                class="chip ${(this.config.show_solar_rings ?? true) ? "active" : ""}"
-                title="Toggle 15m (blue) / 30m (amber) / 60m (red) Upwind Cloud Arrival Arcs"
-                @click=${() => this.toggleFlag("show_solar_rings", true)}
-              >
-                ETA Rings
-              </button>
-              <button
-                class="chip ${this.mixerOpen ? "active" : ""}"
-                title="Adjust Layer Opacities"
-                @click=${() => {
-                  this.mixerOpen = !this.mixerOpen;
-                }}
-              >
-                Opacity
-              </button>
-            </div>
-
-            ${this.mixerOpen
-              ? html`
-                  <div class="mixer-panel">
-                    <div class="mixer-row">
-                      <span
-                        >True Colour
-                        (${Math.round((this.config.true_colour_opacity ?? 0.84) * 100)}%)</span
-                      >
-                      <input
-                        type="range"
-                        min="0.1"
-                        max="1"
-                        step="0.05"
-                        .value=${String(this.config.true_colour_opacity ?? 0.84)}
-                        @input=${(e: Event) =>
-                          this.setConfig({
-                            ...this.config,
-                            true_colour_opacity: Number(
-                              (e.target as HTMLInputElement).value
-                            ),
-                          })}
-                      />
-                    </div>
-                    <div class="mixer-row">
-                      <span
-                        >Cloud Overlay
-                        (${Math.round((this.config.cloud_opacity ?? 0.78) * 100)}%)</span
-                      >
-                      <input
-                        type="range"
-                        min="0.1"
-                        max="1"
-                        step="0.05"
-                        .value=${String(this.config.cloud_opacity ?? 0.78)}
-                        @input=${(e: Event) =>
-                          this.setConfig({
-                            ...this.config,
-                            cloud_opacity: Number(
-                              (e.target as HTMLInputElement).value
-                            ),
-                          })}
-                      />
-                    </div>
-                    <div class="mixer-row">
-                      <span
-                        >Rain Radar
-                        (${Math.round((this.config.radar_opacity ?? 0.85) * 100)}%)</span
-                      >
-                      <input
-                        type="range"
-                        min="0.1"
-                        max="1"
-                        step="0.05"
-                        .value=${String(this.config.radar_opacity ?? 0.85)}
-                        @input=${(e: Event) =>
-                          this.setConfig({
-                            ...this.config,
-                            radar_opacity: Number(
-                              (e.target as HTMLInputElement).value
-                            ),
-                          })}
-                      />
-                    </div>
-                  </div>
-                `
-              : nothing}
-          </div>
-
-          <div class="bottom-dock">
-            ${this.renderLegend()}
-            ${this.renderSolarHud()}
-          </div>
+          ${this.renderAttribution()}
 
           ${this.loading
             ? html`<div class="status-banner">

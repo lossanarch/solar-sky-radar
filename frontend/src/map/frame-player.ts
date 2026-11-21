@@ -15,7 +15,8 @@ export interface ResolvedFrameUrls {
 
 /**
  * Preloads 2 hours of satellite, cloud, and radar WebP frames into local Blob URLs
- * so scrubbing the jogging slider runs at 60fps with zero network latency or flicker.
+ * via Home Assistant's authenticated fetch so scrubbing runs at 60fps and MapLibre
+ * workers never hit 401 errors on `/api/solar_sky_radar/frame/...`.
  */
 export class FramePlayer {
   private blobCache = new Map<string, string>();
@@ -33,11 +34,12 @@ export class FramePlayer {
   private speed = 1.0;
   private timerId: number | null = null;
   private destroyed = false;
+  private entryId?: string;
 
   private activeFlags = {
     trueColour: true,
     cloudOverlay: true,
-    cloudMode: "cloud_mask" as CloudRenderMode,
+    cloudMode: "solar_cloud" as CloudRenderMode,
     radar: true,
   };
 
@@ -64,6 +66,18 @@ export class FramePlayer {
     return this.speed;
   }
 
+  setEntryId(entryId?: string): void {
+    this.entryId = entryId;
+  }
+
+  private withEntryParam(url: string): string {
+    if (!this.entryId || !url.startsWith("/api/") || url.includes("entry_id=")) {
+      return url;
+    }
+    const sep = url.includes("?") ? "&" : "?";
+    return `${url}${sep}entry_id=${encodeURIComponent(this.entryId)}`;
+  }
+
   setLayerFlags(flags: {
     trueColour: boolean;
     cloudOverlay: boolean;
@@ -77,7 +91,14 @@ export class FramePlayer {
       this.activeFlags.radar !== flags.radar;
     this.activeFlags = { ...flags };
     if (changed && this.timeline.length > 0) {
-      void this.preloadAllActive().then(() => this.emitCurrent());
+      const targetIdx = this.currentIndex;
+      // Preload the currently displayed slot FIRST so mode switches (e.g. Solar Mode) appear immediately
+      void this.preloadSlot(targetIdx).then(() => {
+        if (!this.destroyed && this.currentIndex === targetIdx) {
+          this.emitCurrent();
+        }
+        void this.preloadAllActive();
+      });
       this.emitCurrent();
     }
   }
@@ -90,15 +111,15 @@ export class FramePlayer {
     this.satUrlMap.clear();
     for (const sf of manifest.providers.satellite.frames) {
       this.satUrlMap.set(sf.key, {
-        true_colour: sf.true_colour_url,
-        cloud_mask: sf.cloud_mask_url,
-        solar_cloud: sf.solar_cloud_url,
+        true_colour: this.withEntryParam(sf.true_colour_url),
+        cloud_mask: this.withEntryParam(sf.cloud_mask_url),
+        solar_cloud: this.withEntryParam(sf.solar_cloud_url),
       });
     }
 
     this.radarUrlMap.clear();
     for (const rf of manifest.providers.radar.frames) {
-      this.radarUrlMap.set(rf.key, rf.url);
+      this.radarUrlMap.set(rf.key, this.withEntryParam(rf.url));
     }
 
     this.timeline = manifest.timeline ?? [];
@@ -125,7 +146,7 @@ export class FramePlayer {
       this.currentIndex = bestIdx;
     }
 
-    // Load newest/current frame first so map renders immediately
+    // Load newest/current frame first so map renders immediately with decoded blob URLs
     await this.preloadSlot(this.currentIndex);
     this.emitCurrent();
     void this.preloadAllActive();
@@ -227,7 +248,9 @@ export class FramePlayer {
     this.currentIndex = clamped;
     if (!this.isSlotReady(clamped)) {
       void this.preloadSlot(clamped).then(() => {
-        if (this.currentIndex === clamped) this.emitCurrent();
+        if (!this.destroyed && this.currentIndex === clamped) {
+          this.emitCurrent();
+        }
       });
     }
     this.emitCurrent();
@@ -249,6 +272,13 @@ export class FramePlayer {
     this.singleLoop = once;
     if (once || this.currentIndex >= this.timeline.length - 1) {
       this.currentIndex = 0;
+      if (!this.isSlotReady(0)) {
+        void this.preloadSlot(0).then(() => {
+          if (!this.destroyed && this.currentIndex === 0) {
+            this.emitCurrent();
+          }
+        });
+      }
       this.emitCurrent();
     }
     this.playing = true;
@@ -294,6 +324,12 @@ export class FramePlayer {
       return;
     }
 
+    // Preload the upcoming frame ahead of the tick so playback never stalls on network
+    const upcomingIdx = (this.currentIndex + 1) % this.timeline.length;
+    if (!this.isSlotReady(upcomingIdx)) {
+      void this.preloadSlot(upcomingIdx);
+    }
+
     // Dwell longer on the latest ("Now") frame before looping back 2 hours
     const delayMs = isAtLatest ? Math.round(1350 / this.speed) : Math.round(420 / this.speed);
 
@@ -301,6 +337,13 @@ export class FramePlayer {
       if (!this.playing || this.destroyed) return;
       const nextIdx = (this.currentIndex + 1) % this.timeline.length;
       this.currentIndex = nextIdx;
+      if (!this.isSlotReady(nextIdx)) {
+        void this.preloadSlot(nextIdx).then(() => {
+          if (!this.destroyed && this.currentIndex === nextIdx) {
+            this.emitCurrent();
+          }
+        });
+      }
       this.emitCurrent();
       if (this.singleLoop && nextIdx >= this.timeline.length - 1) {
         this.pause();
@@ -308,6 +351,17 @@ export class FramePlayer {
       }
       this.scheduleNextTick();
     }, delayMs);
+  }
+
+  private resolveSafeUrl(url: string): string | null {
+    const cached = this.blobCache.get(url);
+    if (cached) return cached;
+    // Never pass raw authenticated `/api/` paths to MapLibre's Web Worker (avoids 401);
+    // `preloadSlot` fetches them via `hass.fetchWithAuth` on the main thread and re-emits.
+    if (url.startsWith("/api/") && this.getHass()?.fetchWithAuth) {
+      return null;
+    }
+    return url;
   }
 
   emitCurrent(): void {
@@ -321,17 +375,17 @@ export class FramePlayer {
     if (slot.satellite_key) {
       const sat = this.satUrlMap.get(slot.satellite_key);
       if (sat) {
-        trueColourBlobUrl = this.blobCache.get(sat.true_colour) ?? sat.true_colour;
+        trueColourBlobUrl = this.resolveSafeUrl(sat.true_colour);
         const cUrl =
           this.activeFlags.cloudMode === "solar_cloud" ? sat.solar_cloud : sat.cloud_mask;
-        cloudOverlayBlobUrl = this.blobCache.get(cUrl) ?? cUrl;
+        cloudOverlayBlobUrl = this.resolveSafeUrl(cUrl);
       }
     }
 
     if (slot.radar_key) {
       const rUrl = this.radarUrlMap.get(slot.radar_key);
       if (rUrl) {
-        radarBlobUrl = this.blobCache.get(rUrl) ?? rUrl;
+        radarBlobUrl = this.resolveSafeUrl(rUrl);
       }
     }
 

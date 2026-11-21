@@ -113,3 +113,42 @@ async def test_lovelace_yaml_mode_fallback() -> None:
     hass = _FakeHass({"mode": "yaml", "resources": None})
     await async_register_lovelace_card(hass)  # type: ignore[arg-type]
     assert hass.data[DOMAIN]["card_registered"] is True
+
+
+def test_semver_release_script_dry_run() -> None:
+    import subprocess
+
+    script = REPO_ROOT / "scripts" / "release.sh"
+    assert script.is_file()
+
+    manifest = json.loads(
+        (REPO_ROOT / "custom_components" / "solar_sky_radar" / "manifest.json").read_text()
+    )
+    major, minor, patch = (int(x) for x in manifest["version"].split("."))
+
+    res_patch = subprocess.run(
+        ["bash", str(script), "patch", "--dry-run"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert f"v{major}.{minor}.{patch + 1}" in res_patch.stdout
+
+    res_minor = subprocess.run(
+        ["bash", str(script), "minor", "--dry-run"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert f"v{major}.{minor + 1}.0" in res_minor.stdout
+
+    res_explicit = subprocess.run(
+        ["bash", str(script), "1.2.3", "--dry-run"],
+        cwd=REPO_ROOT,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    assert "v1.2.3" in res_explicit.stdout

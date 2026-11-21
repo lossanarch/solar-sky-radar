@@ -22,7 +22,7 @@ if (!window.customCards.some((c) => c.type === "solar-sky-radar-card")) {
     description:
       "Geostationary visible true-colour & solar cloud overlay with rain radar, 850hPa/10m wind streamlines, lightning, NASA FIRMS fires, and 2-hour jogging playback.",
     preview: true,
-    documentationURL: "https://github.com/solar-sky-radar/solar-sky-radar",
+    documentationURL: "https://github.com/lossanarch/solar-sky-radar",
   });
 }
 

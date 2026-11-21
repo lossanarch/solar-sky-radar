@@ -1,0 +1,78 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]*"
+
+permissions:
+  contents: write
+
+jobs:
+  github-release:
+    name: Verify & Publish GitHub Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify manifest version matches tag and run tests
+        run: |
+          TAG_VER="${GITHUB_REF_NAME#v}"
+          MANIFEST_VER="$(python3 -c 'import json; print(json.load(open("custom_components/solar_sky_radar/manifest.json"))["version"])')"
+          if [[ "$TAG_VER" != "$MANIFEST_VER" ]]; then
+            echo "Tag ${GITHUB_REF_NAME} does not match manifest.json version ${MANIFEST_VER}" >&2
+            exit 1
+          fi
+          npm ci
+          npm run typecheck
+          npm test
+          pip install -e . pytest pytest-asyncio
+          pytest -v
+
+      - name: Package release zip
+        run: |
+          mkdir -p dist
+          python3 - "dist/solar_sky_radar-${GITHUB_REF_NAME}.zip" <<'PY'
+          from pathlib import Path
+          import sys
+          import zipfile
+
+          out_zip = Path(sys.argv[1])
+          src_dir = Path("custom_components/solar_sky_radar")
+          with zipfile.ZipFile(out_zip, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+              for p in sorted(src_dir.rglob("*")):
+                  if p.is_file() and "__pycache__" not in p.parts and p.suffix != ".pyc":
+                      zf.write(p, p.relative_to("custom_components"))
+          PY
+
+      - name: Create GitHub Release if not already created by scripts/release.sh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
+            echo "Release ${GITHUB_REF_NAME} already exists; skipping."
+            exit 0
+          fi
+          EXTRA_FLAGS=()
+          if [[ "${GITHUB_REF_NAME}" == *-* ]]; then
+            EXTRA_FLAGS+=("--prerelease")
+          fi
+          gh release create "${GITHUB_REF_NAME}" \
+            "dist/solar_sky_radar-${GITHUB_REF_NAME}.zip" \
+            --title "Solar Sky Radar ${GITHUB_REF_NAME}" \
+            --generate-notes \
+            "${EXTRA_FLAGS[@]}"
