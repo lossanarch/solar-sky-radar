@@ -67,12 +67,14 @@ jobs:
             echo "Release ${GITHUB_REF_NAME} already exists; skipping."
             exit 0
           fi
-          EXTRA_FLAGS=()
+          GH_CMD=(
+            gh release create "${GITHUB_REF_NAME}"
+            "dist/solar_sky_radar-${GITHUB_REF_NAME}.zip"
+            "custom_components/solar_sky_radar/www/solar-sky-radar-card.js"
+            --title "Solar Sky Radar ${GITHUB_REF_NAME}"
+            --generate-notes
+          )
           if [[ "${GITHUB_REF_NAME}" == *-* ]]; then
-            EXTRA_FLAGS+=("--prerelease")
+            GH_CMD+=("--prerelease")
           fi
-          gh release create "${GITHUB_REF_NAME}" \
-            "dist/solar_sky_radar-${GITHUB_REF_NAME}.zip" \
-            --title "Solar Sky Radar ${GITHUB_REF_NAME}" \
-            --generate-notes \
-            "${EXTRA_FLAGS[@]}"
+          "${GH_CMD[@]}"

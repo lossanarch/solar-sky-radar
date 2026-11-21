@@ -313,7 +313,12 @@ if [[ "$TAG_ONLY" -eq 1 ]]; then
   exit 0
 fi
 
-GH_ARGS=("release" "create" "$TAG" "$ZIP_ASSET" "--title" "Solar Sky Radar ${TAG}")
+GH_ARGS=(
+  "release" "create" "$TAG"
+  "$ZIP_ASSET"
+  "custom_components/solar_sky_radar/www/solar-sky-radar-card.js"
+  "--title" "Solar Sky Radar ${TAG}"
+)
 if [[ -n "$GH_REPO" ]]; then
   GH_ARGS+=("--repo" "$GH_REPO")
 fi
