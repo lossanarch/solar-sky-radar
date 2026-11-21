@@ -509,6 +509,7 @@ export class MapController {
   private pinnedPopup: maplibregl.Popup | null = null;
   private hoveredFireId = "";
   private pinnedFireId = "";
+  private locked = true;
 
   private styleReady = false;
   private currentStyleKey = "";
@@ -532,7 +533,72 @@ export class MapController {
 
   init(config: SolarSkyRadarCardConfig): void {
     this.config = config;
+    this.locked = config.lock_map ?? true;
     this.mountPromise = this.mountInitialMap();
+  }
+
+  get isLocked(): boolean {
+    return this.locked;
+  }
+
+  setLocked(locked: boolean, recenterOnLock = true): void {
+    this.locked = locked;
+    this.applyLockState();
+    if (locked && recenterOnLock && this.map) {
+      const [lat, lon] = this.getHomeLatLon();
+      this.map.flyTo({
+        center: [lon, lat],
+        duration: 480,
+      });
+    }
+  }
+
+  private applyLockState(): void {
+    if (!this.map) return;
+    const canvasContainer = this.map.getCanvasContainer();
+    const canvas = this.map.getCanvas();
+
+    if (this.locked) {
+      this.map.dragPan.disable();
+      this.map.scrollZoom.disable();
+      this.map.boxZoom.disable();
+      this.map.doubleClickZoom.disable();
+      this.map.keyboard.disable();
+      this.map.touchZoomRotate.disable();
+      this.map.touchPitch?.disable();
+
+      canvasContainer.classList.remove(
+        "maplibregl-interactive",
+        "maplibregl-touch-drag-pan",
+        "maplibregl-touch-zoom-rotate"
+      );
+      this.container.style.touchAction = "pan-y";
+      canvasContainer.style.touchAction = "pan-y";
+      canvas.style.touchAction = "pan-y";
+      if (!this.hoveredFireId) {
+        canvas.style.cursor = "default";
+      }
+    } else {
+      this.map.dragPan.enable();
+      this.map.scrollZoom.enable();
+      this.map.doubleClickZoom.enable();
+      this.map.keyboard.enable();
+      this.map.touchZoomRotate.enable();
+      this.map.touchZoomRotate.disableRotation();
+      this.map.touchPitch?.disable();
+
+      canvasContainer.classList.add(
+        "maplibregl-interactive",
+        "maplibregl-touch-drag-pan",
+        "maplibregl-touch-zoom-rotate"
+      );
+      this.container.style.touchAction = "none";
+      canvasContainer.style.touchAction = "none";
+      canvas.style.touchAction = "none";
+      if (!this.hoveredFireId) {
+        canvas.style.cursor = "";
+      }
+    }
   }
 
   private getHomeLatLon(): [number, number] {
@@ -647,6 +713,7 @@ export class MapController {
     this.map.on("idle", ensureOverlays);
 
     this.attachHazardHoverAndClickHandlers();
+    this.applyLockState();
 
     if (this.onMapInteract) {
       this.map.on("dragstart", this.onMapInteract);
@@ -866,7 +933,7 @@ export class MapController {
       if (!feat || feat.geometry.type !== "Point") {
         if (this.hoveredFireId) {
           this.hoveredFireId = "";
-          this.map.getCanvas().style.cursor = "";
+          this.map.getCanvas().style.cursor = this.locked ? "default" : "";
         }
         this.hoverPopup?.remove();
         this.hoverPopup = null;
@@ -906,7 +973,7 @@ export class MapController {
     this.map.on("mouseout", () => {
       this.hoveredFireId = "";
       if (this.map) {
-        this.map.getCanvas().style.cursor = "";
+        this.map.getCanvas().style.cursor = this.locked ? "default" : "";
       }
       this.hoverPopup?.remove();
       this.hoverPopup = null;
@@ -1568,7 +1635,16 @@ export class MapController {
 
   zoomBy(delta: number): void {
     if (!this.map) return;
-    this.map.zoomTo(this.map.getZoom() + delta, { duration: 220 });
+    if (this.locked) {
+      const [lat, lon] = this.getHomeLatLon();
+      this.map.easeTo({
+        center: [lon, lat],
+        zoom: this.map.getZoom() + delta,
+        duration: 220,
+      });
+    } else {
+      this.map.zoomTo(this.map.getZoom() + delta, { duration: 220 });
+    }
   }
 
   destroy(): void {

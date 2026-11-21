@@ -23,6 +23,7 @@ const DEFAULT_CONFIG: SolarSkyRadarCardConfig = {
   basemap_theme: "auto",
   zoom_level: 7.2,
   map_height: 490,
+  lock_map: true,
   show_true_colour: true,
   true_colour_opacity: 1.0,
   show_cloud_overlay: false,
@@ -60,6 +61,7 @@ export class SolarSkyRadarCard extends LitElement {
   @state() private hudExpanded = false;
   @state() private layersOpen = false;
   @state() private attribOpen = false;
+  @state() private mapLocked = true;
 
   private mapController: MapController | null = null;
   private framePlayer: FramePlayer | null = null;
@@ -131,6 +133,18 @@ export class SolarSkyRadarCard extends LitElement {
       .map-canvas {
         position: absolute;
         inset: 0;
+      }
+
+      /* When locked to centre, pass single-finger vertical swipes straight through to mobile page scroll */
+      .viewport[data-locked="true"] .map-canvas,
+      .viewport[data-locked="true"] .maplibregl-map,
+      .viewport[data-locked="true"] .maplibregl-canvas-container,
+      .viewport[data-locked="true"] .maplibregl-canvas {
+        touch-action: pan-y !important;
+      }
+
+      .viewport[data-locked="true"] .maplibregl-canvas-container {
+        cursor: default;
       }
 
       /* Top-left Solar HUD — never collides with the single top-right Layers pill */
@@ -506,6 +520,27 @@ export class SolarSkyRadarCard extends LitElement {
         background: var(--surface-bg-hover);
       }
 
+      button.nav-btn.lock-btn {
+        transition: border-color 0.16s ease, background 0.16s ease, color 0.16s ease,
+          box-shadow 0.16s ease;
+      }
+
+      button.nav-btn.lock-btn.unlocked {
+        border-color: #38bdf8;
+        background: rgba(14, 165, 233, 0.24);
+        color: #38bdf8;
+        box-shadow: 0 0 0 2px rgba(56, 189, 248, 0.22),
+          0 2px 8px rgba(15, 23, 42, 0.18);
+      }
+
+      .card[data-theme="light"] button.nav-btn.lock-btn.unlocked {
+        border-color: #0284c7;
+        background: rgba(2, 132, 199, 0.16);
+        color: #0284c7;
+        box-shadow: 0 0 0 2px rgba(2, 132, 199, 0.18),
+          0 2px 8px rgba(15, 23, 42, 0.12);
+      }
+
       .attrib-box {
         position: absolute;
         right: 8px;
@@ -606,14 +641,14 @@ export class SolarSkyRadarCard extends LitElement {
 
       /* Fire Hotspot & Bushfire Incident Hover / Click Popups */
       .ssr-map-popup .maplibregl-popup-content {
-        background: var(--ssr-glass-bg);
+        background: var(--surface-bg-hover);
         backdrop-filter: blur(12px);
         -webkit-backdrop-filter: blur(12px);
-        border: 1px solid var(--ssr-glass-border);
+        border: 1px solid var(--surface-border);
         border-radius: 10px;
         padding: 10px 12px;
         box-shadow: 0 8px 24px rgba(0, 0, 0, 0.36);
-        color: var(--ssr-text);
+        color: var(--text-strong);
         font-family: inherit;
         pointer-events: none;
       }
@@ -624,28 +659,28 @@ export class SolarSkyRadarCard extends LitElement {
       }
 
       .ssr-map-popup .maplibregl-popup-close-button {
-        color: var(--ssr-muted);
+        color: var(--text-muted);
         font-size: 16px;
         padding: 4px 7px;
         line-height: 1;
       }
 
       .ssr-map-popup .maplibregl-popup-close-button:hover {
-        color: var(--ssr-text);
+        color: var(--text-strong);
         background: transparent;
       }
 
       .ssr-map-popup.maplibregl-popup-anchor-bottom .maplibregl-popup-tip {
-        border-top-color: var(--ssr-glass-bg);
+        border-top-color: var(--surface-bg-hover);
       }
       .ssr-map-popup.maplibregl-popup-anchor-top .maplibregl-popup-tip {
-        border-bottom-color: var(--ssr-glass-bg);
+        border-bottom-color: var(--surface-bg-hover);
       }
       .ssr-map-popup.maplibregl-popup-anchor-left .maplibregl-popup-tip {
-        border-right-color: var(--ssr-glass-bg);
+        border-right-color: var(--surface-bg-hover);
       }
       .ssr-map-popup.maplibregl-popup-anchor-right .maplibregl-popup-tip {
-        border-left-color: var(--ssr-glass-bg);
+        border-left-color: var(--surface-bg-hover);
       }
 
       .ssr-fire-tooltip {
@@ -666,7 +701,7 @@ export class SolarSkyRadarCard extends LitElement {
         font-size: 12.5px;
         font-weight: 700;
         line-height: 1.3;
-        color: var(--ssr-text);
+        color: var(--text-strong);
       }
 
       .ssr-fire-badge {
@@ -684,7 +719,7 @@ export class SolarSkyRadarCard extends LitElement {
         color: #fca5a5;
         border: 1px solid rgba(239, 68, 68, 0.55);
       }
-      .card-shell.theme-light .ssr-fire-badge-emergency {
+      .card[data-theme="light"] .ssr-fire-badge-emergency {
         background: rgba(220, 38, 38, 0.14);
         color: #b91c1c;
       }
@@ -695,8 +730,8 @@ export class SolarSkyRadarCard extends LitElement {
         color: #fdba74;
         border: 1px solid rgba(249, 115, 22, 0.48);
       }
-      .card-shell.theme-light .ssr-fire-badge-watch,
-      .card-shell.theme-light .ssr-fire-badge-bushfire {
+      .card[data-theme="light"] .ssr-fire-badge-watch,
+      .card[data-theme="light"] .ssr-fire-badge-bushfire {
         background: rgba(234, 88, 12, 0.14);
         color: #c2410c;
       }
@@ -707,8 +742,8 @@ export class SolarSkyRadarCard extends LitElement {
         color: #fcd34d;
         border: 1px solid rgba(245, 158, 11, 0.45);
       }
-      .card-shell.theme-light .ssr-fire-badge-burn,
-      .card-shell.theme-light .ssr-fire-badge-advice {
+      .card[data-theme="light"] .ssr-fire-badge-burn,
+      .card[data-theme="light"] .ssr-fire-badge-advice {
         background: rgba(217, 119, 6, 0.14);
         color: #92400e;
       }
@@ -718,7 +753,7 @@ export class SolarSkyRadarCard extends LitElement {
         color: #fed7aa;
         border: 1px solid rgba(251, 146, 60, 0.38);
       }
-      .card-shell.theme-light .ssr-fire-badge-hotspot {
+      .card[data-theme="light"] .ssr-fire-badge-hotspot {
         background: rgba(234, 88, 12, 0.12);
         color: #9a3412;
       }
@@ -726,9 +761,12 @@ export class SolarSkyRadarCard extends LitElement {
       .ssr-fire-sub {
         font-size: 11px;
         font-weight: 600;
-        color: var(--ssr-accent);
+        color: #38bdf8;
         padding-bottom: 4px;
-        border-bottom: 1px solid var(--ssr-glass-border);
+        border-bottom: 1px solid var(--surface-border);
+      }
+      .card[data-theme="light"] .ssr-fire-sub {
+        color: #0284c7;
       }
 
       .ssr-fire-grid {
@@ -747,12 +785,12 @@ export class SolarSkyRadarCard extends LitElement {
       }
 
       .ssr-fire-k {
-        color: var(--ssr-muted);
+        color: var(--text-muted);
         flex-shrink: 0;
       }
 
       .ssr-fire-v {
-        color: var(--ssr-text);
+        color: var(--text-strong);
         font-weight: 600;
         text-align: right;
       }
@@ -760,7 +798,7 @@ export class SolarSkyRadarCard extends LitElement {
       .ssr-fire-hint {
         margin-top: 2px;
         font-size: 10px;
-        color: var(--ssr-muted);
+        color: var(--text-muted);
         text-align: right;
       }
 
@@ -769,8 +807,11 @@ export class SolarSkyRadarCard extends LitElement {
         display: inline-block;
         font-size: 11px;
         font-weight: 600;
-        color: var(--ssr-accent);
+        color: #38bdf8;
         text-decoration: none;
+      }
+      .card[data-theme="light"] .ssr-fire-link {
+        color: #0284c7;
       }
 
       .ssr-fire-link:hover {
@@ -807,8 +848,14 @@ export class SolarSkyRadarCard extends LitElement {
     if (!config) {
       throw new Error("Invalid configuration");
     }
+    const prevLockCfg = this.config.lock_map;
     const prevMode = resolveAutoplayMode(this.config);
     this.config = { ...DEFAULT_CONFIG, ...config };
+    const nextLockCfg = this.config.lock_map ?? true;
+    if (prevLockCfg !== config.lock_map || !this.mapController) {
+      this.mapLocked = nextLockCfg;
+      this.mapController?.setLocked(nextLockCfg, nextLockCfg);
+    }
     const nextMode = resolveAutoplayMode(this.config);
     if (prevMode !== nextMode) {
       this.hasPlayedSingleOnReveal = false;
@@ -851,6 +898,7 @@ export class SolarSkyRadarCard extends LitElement {
       }
     );
     this.mapController.init(this.config);
+    this.mapController.setLocked(this.mapLocked, false);
 
     this.framePlayer = new FramePlayer(
       () => this.hass,
@@ -1020,6 +1068,12 @@ export class SolarSkyRadarCard extends LitElement {
       (this.config.wind_level ?? "850hPa") === "850hPa" ? "10m" : "850hPa";
     this.setConfig({ ...this.config, show_wind: true, wind_level: next });
   }
+
+  private toggleMapLock = (): void => {
+    const nextLocked = !this.mapLocked;
+    this.mapLocked = nextLocked;
+    this.mapController?.setLocked(nextLocked, true);
+  };
 
   private activeLayerCount(): number {
     const flags = [
@@ -1241,7 +1295,11 @@ export class SolarSkyRadarCard extends LitElement {
 
     return html`
       <div class="card" data-theme=${isDark ? "dark" : "light"}>
-        <div class="viewport" style="height: ${height}px;">
+        <div
+          class="viewport"
+          data-locked=${this.mapLocked ? "true" : "false"}
+          style="height: ${height}px;"
+        >
           <div class="map-canvas"></div>
 
           ${this.renderSolarHud()}
@@ -1423,11 +1481,48 @@ export class SolarSkyRadarCard extends LitElement {
               &minus;
             </button>
             <button
-              class="nav-btn"
-              title="Recenter on Home / Solar Array"
-              @click=${() => this.mapController?.recenter()}
+              class="nav-btn lock-btn ${this.mapLocked ? "locked" : "unlocked"}"
+              type="button"
+              aria-pressed=${!this.mapLocked}
+              title=${this.mapLocked
+                ? "Map locked to centre (tap to unlock panning)"
+                : "Panning unlocked (tap to recenter & lock)"}
+              @click=${this.toggleMapLock}
             >
-              &#8982;
+              ${this.mapLocked
+                ? html`<svg
+                    width="14"
+                    height="14"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <rect x="5" y="11" width="14" height="10" rx="2.5"></rect>
+                    <path d="M8 11V7a4 4 0 0 1 8 0v4"></path>
+                    <circle cx="12" cy="16" r="1.2" fill="currentColor"></circle>
+                  </svg>`
+                : html`<svg
+                    width="15"
+                    height="15"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <circle cx="12" cy="12" r="7"></circle>
+                    <circle cx="12" cy="12" r="2" fill="currentColor"></circle>
+                    <line x1="12" y1="2" x2="12" y2="5"></line>
+                    <line x1="12" y1="19" x2="12" y2="22"></line>
+                    <line x1="2" y1="12" x2="5" y2="12"></line>
+                    <line x1="19" y1="12" x2="22" y2="12"></line>
+                  </svg>`}
             </button>
           </div>
 

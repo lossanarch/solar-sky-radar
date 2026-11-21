@@ -77,6 +77,7 @@ type: custom:solar-sky-radar-card
 title: Melbourne Solar & Sky Radar
 map_height: 500
 zoom_level: 7.4
+lock_map: true               # locks map to centre for mobile scrolling; tap lock/centre button to unlock
 basemap_theme: auto          # auto | dark | light | bom_dark | bom_light
 show_true_colour: true
 true_colour_opacity: 1.0

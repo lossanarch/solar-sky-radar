@@ -15,6 +15,7 @@ export interface SolarSkyRadarCardConfig {
   zoom_level?: number;
   map_height?: number;
   basemap_theme?: BasemapTheme;
+  lock_map?: boolean;
 
   show_true_colour?: boolean;
   true_colour_opacity?: number;

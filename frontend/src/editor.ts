@@ -216,6 +216,15 @@ export class SolarSkyRadarCardEditor extends LitElement {
             />
           </label>
         </div>
+        <label class="toggle" style="margin-top: 6px;">
+          <span>Lock Map to Centre by Default (Mobile-Friendly Page Scroll)</span>
+          <input
+            type="checkbox"
+            .checked=${c.lock_map ?? true}
+            @change=${(e: Event) =>
+              this.updateField("lock_map", (e.target as HTMLInputElement).checked)}
+          />
+        </label>
       </div>
 
       <div class="section">
