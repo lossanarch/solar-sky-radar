@@ -1,6 +1,6 @@
 [project]
 name = "solar-sky-radar"
-version = "0.1.1"
+version = "0.1.2"
 description = "Home Assistant HACS Solar Sky & Weather Radar integration and Lovelace card"
 readme = "README.md"
 requires-python = ">=3.12"

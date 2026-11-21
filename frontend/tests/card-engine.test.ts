@@ -179,7 +179,7 @@ describe("resolveAutoplayMode & sanitizeVectorStyleForPrivacy", () => {
     expect(resolveAutoplayMode({ type: "x", autoplay_mode: "once", autoplay: true })).toBe("once");
   });
 
-  it("strips sprite and pattern/icon properties to prevent canvas getImageData readback", () => {
+  it("strips sprite/icons, upgrades iOS/desktop town label contrast, and orders symbols above fills", () => {
     const raw: StyleSpecification = {
       version: 8,
       sprite: "https://tiles.openfreemap.org/sprites/ofm_f384/ofm",
@@ -187,10 +187,24 @@ describe("resolveAutoplayMode & sanitizeVectorStyleForPrivacy", () => {
       sources: {},
       layers: [
         {
+          id: "water_name",
+          type: "symbol",
+          source: "openmaptiles",
+          layout: { "text-field": "{name}", "text-font": ["Noto Sans Regular"] },
+          paint: { "text-color": "hsla(0,0%,0%,0.7)" },
+        },
+        {
           id: "landcover_wood",
           type: "fill",
           source: "openmaptiles",
           paint: { "fill-pattern": "wood" },
+        },
+        {
+          id: "highway-shield-non-us",
+          type: "symbol",
+          source: "openmaptiles",
+          layout: { "text-field": "{ref}" },
+          paint: {},
         },
         {
           id: "highway_shield",
@@ -199,25 +213,52 @@ describe("resolveAutoplayMode & sanitizeVectorStyleForPrivacy", () => {
           layout: { "icon-image": "road_3" },
         },
         {
-          id: "label_town",
+          id: "place_town",
           type: "symbol",
           source: "openmaptiles",
-          layout: { "text-field": "{name}", "icon-image": "circle_11_black" },
+          layout: {
+            "text-field": "{name}",
+            "text-size": 10,
+            "icon-image": "circle_11_black",
+          },
+          paint: {
+            "text-color": "rgb(101,101,101)",
+            "text-halo-width": 1,
+            "text-halo-blur": 1,
+          },
         },
       ],
     };
 
-    const clean = sanitizeVectorStyleForPrivacy(raw, false);
-    expect(clean.sprite).toBeUndefined();
-    expect(clean.layers.map((l) => l.id)).toEqual(["landcover_wood", "label_town"]);
+    const cleanDark = sanitizeVectorStyleForPrivacy(raw, true);
+    expect(cleanDark.sprite).toBeUndefined();
+    // Fills come first, shields/icon-only dropped, symbols ordered on top
+    expect(cleanDark.layers.map((l) => l.id)).toEqual([
+      "landcover_wood",
+      "water_name",
+      "place_town",
+    ]);
 
-    const wood = clean.layers[0] as { paint: Record<string, unknown> };
+    const wood = cleanDark.layers[0] as { paint: Record<string, unknown> };
     expect(wood.paint["fill-pattern"]).toBeUndefined();
     expect(wood.paint["fill-color"]).toBeDefined();
 
-    const town = clean.layers[1] as { layout: Record<string, unknown> };
-    expect(town.layout["icon-image"]).toBeUndefined();
-    expect(town.layout["text-field"]).toBe("{name}");
+    const townDark = cleanDark.layers[2] as {
+      layout: Record<string, unknown>;
+      paint: Record<string, unknown>;
+    };
+    expect(townDark.layout["icon-image"]).toBeUndefined();
+    expect(townDark.layout["text-font"]).toEqual(["Noto Sans Bold"]);
+    expect(townDark.paint["text-color"]).toBe("#f8fafc");
+    expect(townDark.paint["text-halo-width"]).toBe(2.0);
+    expect(townDark.paint["text-halo-blur"]).toBe(0.2);
+
+    const cleanLight = sanitizeVectorStyleForPrivacy(raw, false);
+    const townLight = cleanLight.layers[2] as { paint: Record<string, unknown> };
+    expect(townLight.paint["text-color"]).toBe("#0f172a");
+    expect(townLight.paint["text-halo-color"]).toBe("rgba(255, 255, 255, 0.96)");
+    expect(townLight.paint["text-halo-width"]).toBe(2.0);
+    expect(townLight.paint["text-halo-blur"]).toBe(0.2);
   });
 });
 

@@ -19,7 +19,7 @@ import { WindStreamlineRenderer } from "./wind-particles";
 const OPENFREEMAP_DARK_STYLE = "https://tiles.openfreemap.org/styles/dark";
 const OPENFREEMAP_LIGHT_STYLE = "https://tiles.openfreemap.org/styles/positron";
 
-// Cache sanitized vector styles so switching or remounting cards requires zero extra fetches
+// Cache sanitized base vector styles so switching themes or remounting cards requires zero extra fetches
 const SAFE_VECTOR_STYLE_CACHE = new Map<string, Promise<StyleSpecification>>();
 
 // 1x1 transparent PNG placeholder while initial WebP frame decodes
@@ -46,10 +46,12 @@ function buildPlaceholderStyle(dark: boolean): StyleSpecification {
 }
 
 /**
- * Strip sprite sheets and pattern/icon lookups from vector styles so MapLibre GL JS
- * never calls `canvas.getContext('2d').getImageData(...)` (avoiding browser canvas
- * anti-fingerprinting prompts and striped placeholder artifacts while keeping crisp
- * vector roads, coastlines, boundaries, and `.pbf` city/suburb labels).
+ * Tune a vector basemap style for weather/satellite overlay rendering & strict browser privacy:
+ * 1. Strip `sprite`, `*-pattern`, and `icon-image` so MapLibre never invokes `canvas.getContext('2d').getImageData(...)`.
+ * 2. Keep only OpenFreeMap-hosted PBF font stacks (`Noto Sans Regular/Bold/Italic`) so 404 TinySDF canvas fallback never fires.
+ * 3. Upgrade town, suburb, city, road, and water labels from OpenFreeMap's dim 10px `#656565` / blurred-halo defaults
+ *    to crisp, high-contrast meteorological typography with solid opaque halos (legible on WebKit iOS & desktop over clouds/radar).
+ * 4. Ensure all `symbol` layers sit above all `fill` and `line` layers so polygons never cover weather rasters or labels.
  */
 export function sanitizeVectorStyleForPrivacy(
   raw: StyleSpecification,
@@ -60,14 +62,26 @@ export function sanitizeVectorStyleForPrivacy(
   };
   delete style.sprite;
 
-  style.layers = (style.layers ?? []).filter((layer) => {
-    const rec = layer as Record<string, unknown>;
-    const layout = rec.layout as Record<string, unknown> | undefined;
-    const paint = rec.paint as Record<string, unknown> | undefined;
+  const nonSymbolLayers: StyleSpecification["layers"] = [];
+  const symbolLayers: StyleSpecification["layers"] = [];
 
-    if (layer.type === "symbol" && layout && "icon-image" in layout) {
+  for (const layer of style.layers ?? []) {
+    const id = layer.id.toLowerCase();
+    const rec = layer as Record<string, unknown>;
+    const layout = (rec.layout ?? {}) as Record<string, unknown>;
+    const paint = (rec.paint ?? {}) as Record<string, unknown>;
+
+    // Drop route shield badge layers whose sprite boxes were removed
+    if (
+      layer.type === "symbol" &&
+      (id.includes("shield") || id === "highway_name_motorway")
+    ) {
+      continue;
+    }
+
+    if (layer.type === "symbol" && "icon-image" in layout) {
       if (!("text-field" in layout)) {
-        return false;
+        continue;
       }
       delete layout["icon-image"];
       delete layout["icon-size"];
@@ -77,46 +91,209 @@ export function sanitizeVectorStyleForPrivacy(
       delete layout["icon-optional"];
     }
 
-    if (paint) {
-      if ("fill-pattern" in paint) {
-        delete paint["fill-pattern"];
-        if (!("fill-color" in paint)) {
-          paint["fill-color"] = dark
-            ? "rgba(20, 45, 38, 0.22)"
-            : "rgba(187, 226, 198, 0.25)";
-        }
+    delete paint["icon-opacity"];
+    delete paint["icon-color"];
+    delete paint["icon-halo-color"];
+    delete paint["icon-halo-width"];
+
+    if ("fill-pattern" in paint) {
+      delete paint["fill-pattern"];
+      if (!("fill-color" in paint)) {
+        paint["fill-color"] = dark
+          ? "rgba(20, 45, 38, 0.22)"
+          : "rgba(187, 226, 198, 0.25)";
       }
-      delete paint["line-pattern"];
-      delete paint["background-pattern"];
+    }
+    delete paint["line-pattern"];
+    delete paint["background-pattern"];
+
+    // Soften major road & boundary lines that sit above satellite/radar so they guide orientation without overpowering echoes
+    if (layer.type === "line") {
+      if (id.includes("highway_major") || id.includes("highway_motorway")) {
+        if (id.includes("casing")) {
+          paint["line-color"] = dark
+            ? "rgba(15, 23, 42, 0.45)"
+            : "rgba(255, 255, 255, 0.45)";
+        } else {
+          paint["line-color"] = dark
+            ? "rgba(148, 163, 184, 0.36)"
+            : "rgba(71, 85, 105, 0.34)";
+        }
+      } else if (id.includes("boundary")) {
+        paint["line-color"] = dark
+          ? "rgba(203, 213, 225, 0.48)"
+          : "rgba(51, 65, 85, 0.46)";
+      }
     }
 
-    return true;
-  });
+    // Upgrade text legibility for WebKit iOS & desktop over bright clouds, dark land/sea, and rain radar
+    if (layer.type === "symbol" && "text-field" in layout) {
+      const haloDark = "rgba(9, 14, 26, 0.95)";
+      const haloLight = "rgba(255, 255, 255, 0.96)";
 
+      if (id.includes("city_capital") || id.includes("city_large")) {
+        layout["text-font"] = ["Noto Sans Bold"];
+        layout["text-size"] = [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          4,
+          13.5,
+          7,
+          16,
+          11,
+          19.5,
+        ];
+        paint["text-color"] = dark ? "#ffffff" : "#0f172a";
+        paint["text-halo-color"] = dark ? haloDark : haloLight;
+        paint["text-halo-width"] = 2.2;
+        paint["text-halo-blur"] = 0.2;
+      } else if (id.includes("city")) {
+        layout["text-font"] = ["Noto Sans Bold"];
+        layout["text-size"] = [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          4,
+          12.5,
+          7,
+          14.5,
+          11,
+          17.5,
+        ];
+        paint["text-color"] = dark ? "#f8fafc" : "#0f172a";
+        paint["text-halo-color"] = dark ? haloDark : haloLight;
+        paint["text-halo-width"] = 2.1;
+        paint["text-halo-blur"] = 0.2;
+      } else if (id.includes("town")) {
+        layout["text-font"] = ["Noto Sans Bold"];
+        layout["text-size"] = [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          6,
+          12,
+          8,
+          13.5,
+          11,
+          15.5,
+        ];
+        paint["text-color"] = dark ? "#f8fafc" : "#0f172a";
+        paint["text-halo-color"] = dark ? haloDark : haloLight;
+        paint["text-halo-width"] = 2.0;
+        paint["text-halo-blur"] = 0.2;
+      } else if (
+        id.includes("suburb") ||
+        id.includes("village") ||
+        id.includes("other") ||
+        id.includes("airport")
+      ) {
+        layout["text-font"] = ["Noto Sans Regular"];
+        layout["text-size"] = [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          7,
+          11.5,
+          10,
+          13,
+          13,
+          14.5,
+        ];
+        paint["text-color"] = dark ? "#f1f5f9" : "#1e293b";
+        paint["text-halo-color"] = dark
+          ? "rgba(9, 14, 26, 0.93)"
+          : "rgba(255, 255, 255, 0.95)";
+        paint["text-halo-width"] = 1.9;
+        paint["text-halo-blur"] = 0.2;
+      } else if (id.includes("state") || id.includes("country")) {
+        layout["text-font"] = id.includes("country")
+          ? ["Noto Sans Bold"]
+          : ["Noto Sans Regular"];
+        layout["text-size"] = [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          3,
+          11,
+          7,
+          13.5,
+        ];
+        paint["text-color"] = dark ? "#cbd5e1" : "#334155";
+        paint["text-halo-color"] = dark
+          ? "rgba(9, 14, 26, 0.9)"
+          : "rgba(255, 255, 255, 0.93)";
+        paint["text-halo-width"] = 1.85;
+        paint["text-halo-blur"] = 0.2;
+      } else if (id.includes("water")) {
+        layout["text-font"] = ["Noto Sans Italic"];
+        paint["text-color"] = dark ? "#93c5fd" : "#1e40af";
+        paint["text-halo-color"] = dark
+          ? "rgba(9, 14, 26, 0.9)"
+          : "rgba(255, 255, 255, 0.92)";
+        paint["text-halo-width"] = 1.75;
+        paint["text-halo-blur"] = 0.2;
+      } else {
+        // Highway & street names
+        layout["text-font"] = ["Noto Sans Regular"];
+        layout["text-size"] = [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          11,
+          11,
+          14,
+          13,
+        ];
+        paint["text-color"] = dark ? "#e2e8f0" : "#1e293b";
+        paint["text-halo-color"] = dark
+          ? "rgba(9, 14, 26, 0.92)"
+          : "rgba(255, 255, 255, 0.94)";
+        paint["text-halo-width"] = 1.75;
+        paint["text-halo-blur"] = 0.2;
+      }
+
+      rec.layout = layout;
+      rec.paint = paint;
+      symbolLayers.push(layer);
+      continue;
+    }
+
+    if (Object.keys(layout).length > 0) rec.layout = layout;
+    if (Object.keys(paint).length > 0) rec.paint = paint;
+
+    if (layer.type === "symbol") {
+      symbolLayers.push(layer);
+    } else {
+      nonSymbolLayers.push(layer);
+    }
+  }
+
+  style.layers = [...nonSymbolLayers, ...symbolLayers];
   return style;
 }
 
-function fetchPrivacySafeVectorStyle(
+async function fetchPrivacySafeVectorStyle(
   url: string,
   dark: boolean
 ): Promise<StyleSpecification> {
-  const cached = SAFE_VECTOR_STYLE_CACHE.get(url);
-  if (cached) return cached;
-
-  const p = (async () => {
-    try {
-      const resp = await fetch(url, { mode: "cors" });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const json = (await resp.json()) as StyleSpecification;
-      return sanitizeVectorStyleForPrivacy(json, dark);
-    } catch {
-      SAFE_VECTOR_STYLE_CACHE.delete(url);
-      return buildPlaceholderStyle(dark);
-    }
-  })();
-
-  SAFE_VECTOR_STYLE_CACHE.set(url, p);
-  return p;
+  const cacheKey = `${url}::${dark ? "dark" : "light"}`;
+  let pending = SAFE_VECTOR_STYLE_CACHE.get(cacheKey);
+  if (!pending) {
+    pending = (async () => {
+      try {
+        const resp = await fetch(url, { mode: "cors" });
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const json = (await resp.json()) as StyleSpecification;
+        return sanitizeVectorStyleForPrivacy(json, dark);
+      } catch {
+        SAFE_VECTOR_STYLE_CACHE.delete(cacheKey);
+        return buildPlaceholderStyle(dark);
+      }
+    })();
+    SAFE_VECTOR_STYLE_CACHE.set(cacheKey, pending);
+  }
+  return structuredClone(await pending);
 }
 
 function buildBomRasterStyle(
@@ -188,7 +365,16 @@ export function resolveIsDark(
   const t = theme ?? "auto";
   if (t === "dark" || t === "bom_dark") return true;
   if (t === "light" || t === "bom_light") return false;
-  return hass?.themes?.darkMode ?? true;
+  if (typeof hass?.themes?.darkMode === "boolean") {
+    return hass.themes.darkMode;
+  }
+  if (
+    typeof window !== "undefined" &&
+    typeof window.matchMedia === "function"
+  ) {
+    return window.matchMedia("(prefers-color-scheme: dark)").matches;
+  }
+  return true;
 }
 
 /**
@@ -320,8 +506,9 @@ export class MapController {
   }
 
   /**
-   * Find the first road/boundary/symbol layer so weather rasters sit ABOVE land/water fill
-   * while coastlines, highways, and suburb/city labels stay sharp ON TOP of clouds & radar.
+   * Find the first major road/boundary/symbol layer AFTER all `fill` polygons so weather
+   * rasters sit above land/water/building fills while major roads, borders, and crisp town
+   * labels stay sharp ON TOP of clouds & radar.
    */
   private findOverlayAnchorLayerId(): string | undefined {
     if (!this.map) return undefined;
@@ -331,13 +518,35 @@ export class MapController {
     );
     if (bomAnchor) return bomAnchor.id;
 
-    const vecAnchor = layers.find(
-      (l) =>
+    let lastFillIdx = -1;
+    for (let i = 0; i < layers.length; i++) {
+      if (layers[i].type === "fill") {
+        lastFillIdx = i;
+      }
+    }
+
+    for (let i = lastFillIdx + 1; i < layers.length; i++) {
+      const l = layers[i];
+      const id = l.id.toLowerCase();
+      if (
         l.type === "symbol" ||
-        l.id.includes("highway_major") ||
-        l.id.includes("boundary")
+        id.includes("highway_major") ||
+        id.includes("highway_motorway") ||
+        id.includes("boundary")
+      ) {
+        return l.id;
+      }
+    }
+    return undefined;
+  }
+
+  private findFirstSymbolLayerId(): string | undefined {
+    if (!this.map) return undefined;
+    const layers = this.map.getStyle()?.layers ?? [];
+    const sym = layers.find(
+      (l) => l.type === "symbol" || l.id === "bom-towns-label-top"
     );
-    return vecAnchor?.id;
+    return sym?.id;
   }
 
   private defaultCoords(): [[number, number], [number, number], [number, number], [number, number]] {
@@ -357,6 +566,7 @@ export class MapController {
   private setupOverlayLayers(): void {
     if (!this.map || this.map.getSource("ssr-true-colour")) return;
     const anchorId = this.findOverlayAnchorLayerId();
+    const labelAnchorId = this.findFirstSymbolLayerId();
     const coords = this.defaultCoords();
     const isDark = resolveIsDark(this.config.basemap_theme, this.getHass());
 
@@ -432,9 +642,9 @@ export class MapController {
             "source-layer": "water",
             paint: {
               "line-color": isDark
-                ? "rgba(148, 163, 184, 0.65)"
-                : "rgba(51, 65, 85, 0.58)",
-              "line-width": ["interpolate", ["linear"], ["zoom"], 4, 0.7, 9, 1.35],
+                ? "rgba(148, 163, 184, 0.7)"
+                : "rgba(30, 41, 59, 0.62)",
+              "line-width": ["interpolate", ["linear"], ["zoom"], 4, 0.75, 9, 1.4],
             },
           },
           anchorId
@@ -444,42 +654,48 @@ export class MapController {
       }
     }
 
-    // 4. Upwind Solar Arrival Arcs (15m / 30m / 60m) — clean colour-coded dashed lines only (no text clutter)
+    // 4. Upwind Solar Arrival Arcs (15m / 30m / 60m) — placed below town/city labels so arcs never cross text
     this.map.addSource("ssr-solar-arcs", {
       type: "geojson",
       data: this.manifest?.solar?.arrival_arcs_geojson ?? EMPTY_FC,
     });
-    this.map.addLayer({
-      id: "ssr-solar-arcs-line",
-      type: "line",
-      source: "ssr-solar-arcs",
-      filter: ["==", ["get", "kind"], "arrival_arc"],
-      paint: {
-        "line-color": [
-          "match",
-          ["get", "minutes"],
-          15,
-          isDark ? "#38bdf8" : "#0284c7",
-          30,
-          isDark ? "#fbbf24" : "#d97706",
-          isDark ? "#f87171" : "#dc2626",
-        ],
-        "line-width": 2.0,
-        "line-dasharray": [3, 2.5],
-        "line-opacity": 0.9,
+    this.map.addLayer(
+      {
+        id: "ssr-solar-arcs-line",
+        type: "line",
+        source: "ssr-solar-arcs",
+        filter: ["==", ["get", "kind"], "arrival_arc"],
+        paint: {
+          "line-color": [
+            "match",
+            ["get", "minutes"],
+            15,
+            isDark ? "#38bdf8" : "#0284c7",
+            30,
+            isDark ? "#fbbf24" : "#d97706",
+            isDark ? "#f87171" : "#dc2626",
+          ],
+          "line-width": 2.0,
+          "line-dasharray": [3, 2.5],
+          "line-opacity": 0.9,
+        },
       },
-    });
-    this.map.addLayer({
-      id: "ssr-solar-vector-line",
-      type: "line",
-      source: "ssr-solar-arcs",
-      filter: ["==", ["get", "kind"], "approach_vector"],
-      paint: {
-        "line-color": isDark ? "#38bdf8" : "#0284c7",
-        "line-width": 1.6,
-        "line-opacity": 0.7,
+      labelAnchorId
+    );
+    this.map.addLayer(
+      {
+        id: "ssr-solar-vector-line",
+        type: "line",
+        source: "ssr-solar-arcs",
+        filter: ["==", ["get", "kind"], "approach_vector"],
+        paint: {
+          "line-color": isDark ? "#38bdf8" : "#0284c7",
+          "line-width": 1.6,
+          "line-opacity": 0.7,
+        },
       },
-    });
+      labelAnchorId
+    );
 
     // 5. NASA FIRMS / DEA Bushfire Hotspots
     this.map.addSource("ssr-fires", {
