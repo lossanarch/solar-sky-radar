@@ -53,7 +53,7 @@ All 2 hours of WebP frames (`true_colour`, `cloud_mask` / `solar_cloud`, and `ra
 
 1. Open **HACS** in Home Assistant.
 2. Click the three-dot menu (`⋮`) in the top-right corner and choose **Custom repositories**.
-3. Paste the URL of this repository and select Category: **Integration**.
+3. Paste `https://github.com/lossanarch/solar-sky-radar` and select Category: **Integration**.
 4. Click **Download** on **Solar Sky Radar**.
 5. **Restart Home Assistant**.
 6. Go to **Settings -> Devices & Services -> Add Integration** and search for **Solar Sky Radar**:
