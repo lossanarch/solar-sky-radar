@@ -11,6 +11,7 @@ export class SolarSkyJogSlider extends LitElement {
   @property({ type: Boolean }) playing = false;
   @property({ type: Number }) speed = 1;
   @property({ type: String }) timeZone = "";
+  @property({ type: Boolean }) dark = true;
 
   private dragging = false;
 
@@ -22,16 +23,54 @@ export class SolarSkyJogSlider extends LitElement {
     }
 
     .bar {
+      --bar-bg: rgba(15, 23, 42, 0.92);
+      --bar-border: rgba(148, 163, 184, 0.2);
+      --bar-text: #f8fafc;
+      --bar-muted: #94a3b8;
+      --ctrl-bg: rgba(30, 41, 59, 0.88);
+      --ctrl-hover: rgba(51, 65, 85, 0.95);
+      --ctrl-border: rgba(148, 163, 184, 0.28);
+      --ctrl-text: #f1f5f9;
+      --track-bg: rgba(30, 41, 59, 0.95);
+      --tick-empty: rgba(100, 116, 139, 0.35);
+      --tick-ready: rgba(148, 163, 184, 0.58);
+      --now-bg: rgba(16, 185, 129, 0.2);
+      --now-text: #6ee7b7;
+      --now-border: rgba(16, 185, 129, 0.45);
+      --past-bg: rgba(245, 158, 11, 0.2);
+      --past-text: #fcd34d;
+      --past-border: rgba(245, 158, 11, 0.45);
+
       display: flex;
       flex-direction: column;
       gap: 6px;
       padding: 8px 12px 10px;
-      background: rgba(15, 23, 42, 0.86);
+      background: var(--bar-bg);
       backdrop-filter: blur(12px);
       -webkit-backdrop-filter: blur(12px);
-      border-top: 1px solid rgba(148, 163, 184, 0.2);
-      color: #f8fafc;
+      border-top: 1px solid var(--bar-border);
+      color: var(--bar-text);
       font-family: var(--paper-font-body1_-_font-family, system-ui, -apple-system, sans-serif);
+    }
+
+    .bar[data-theme="light"] {
+      --bar-bg: rgba(248, 250, 252, 0.96);
+      --bar-border: rgba(15, 23, 42, 0.12);
+      --bar-text: #0f172a;
+      --bar-muted: #64748b;
+      --ctrl-bg: #ffffff;
+      --ctrl-hover: #f1f5f9;
+      --ctrl-border: rgba(15, 23, 42, 0.18);
+      --ctrl-text: #0f172a;
+      --track-bg: rgba(226, 232, 240, 0.95);
+      --tick-empty: rgba(148, 163, 184, 0.4);
+      --tick-ready: rgba(100, 116, 139, 0.55);
+      --now-bg: rgba(16, 185, 129, 0.15);
+      --now-text: #047857;
+      --now-border: rgba(16, 185, 129, 0.4);
+      --past-bg: rgba(245, 158, 11, 0.16);
+      --past-text: #b45309;
+      --past-border: rgba(245, 158, 11, 0.42);
     }
 
     .top-row {
@@ -49,9 +88,9 @@ export class SolarSkyJogSlider extends LitElement {
 
     button.ctrl {
       appearance: none;
-      border: 1px solid rgba(148, 163, 184, 0.28);
-      background: rgba(30, 41, 59, 0.85);
-      color: #f1f5f9;
+      border: 1px solid var(--ctrl-border);
+      background: var(--ctrl-bg);
+      color: var(--ctrl-text);
       border-radius: 8px;
       height: 30px;
       min-width: 30px;
@@ -66,8 +105,8 @@ export class SolarSkyJogSlider extends LitElement {
     }
 
     button.ctrl:hover {
-      background: rgba(51, 65, 85, 0.95);
-      border-color: rgba(56, 189, 248, 0.65);
+      background: var(--ctrl-hover);
+      border-color: rgba(2, 132, 199, 0.65);
     }
 
     button.ctrl:active {
@@ -76,12 +115,14 @@ export class SolarSkyJogSlider extends LitElement {
 
     button.play-btn {
       background: #0284c7;
-      border-color: #38bdf8;
+      border-color: #0284c7;
+      color: #ffffff;
       min-width: 36px;
     }
 
     button.play-btn:hover {
       background: #0369a1;
+      border-color: #0369a1;
     }
 
     .time-readout {
@@ -91,7 +132,7 @@ export class SolarSkyJogSlider extends LitElement {
       font-variant-numeric: tabular-nums;
       font-size: 12.5px;
       font-weight: 600;
-      color: #e2e8f0;
+      color: var(--bar-text);
     }
 
     .offset-badge {
@@ -103,15 +144,15 @@ export class SolarSkyJogSlider extends LitElement {
     }
 
     .offset-now {
-      background: rgba(16, 185, 129, 0.22);
-      color: #6ee7b7;
-      border: 1px solid rgba(16, 185, 129, 0.45);
+      background: var(--now-bg);
+      color: var(--now-text);
+      border: 1px solid var(--now-border);
     }
 
     .offset-past {
-      background: rgba(245, 158, 11, 0.2);
-      color: #fcd34d;
-      border: 1px solid rgba(245, 158, 11, 0.45);
+      background: var(--past-bg);
+      color: var(--past-text);
+      border: 1px solid var(--past-border);
     }
 
     .scrubber-wrap {
@@ -127,33 +168,33 @@ export class SolarSkyJogSlider extends LitElement {
       width: 100%;
       height: 7px;
       border-radius: 999px;
-      background: rgba(30, 41, 59, 0.95);
+      background: var(--track-bg);
       display: grid;
       grid-auto-flow: column;
       grid-auto-columns: 1fr;
       gap: 2px;
       padding: 1px;
       overflow: hidden;
-      border: 1px solid rgba(148, 163, 184, 0.2);
+      border: 1px solid var(--bar-border);
     }
 
     .tick {
       height: 100%;
       border-radius: 3px;
-      background: rgba(100, 116, 139, 0.35);
+      background: var(--tick-empty);
       transition: background 0.12s ease;
     }
 
     .tick.ready {
-      background: rgba(148, 163, 184, 0.58);
+      background: var(--tick-ready);
     }
 
     .tick.past-active {
-      background: rgba(56, 189, 248, 0.72);
+      background: rgba(2, 132, 199, 0.72);
     }
 
     .tick.current {
-      background: #38bdf8;
+      background: #0ea5e9;
     }
 
     .thumb {
@@ -162,9 +203,9 @@ export class SolarSkyJogSlider extends LitElement {
       width: 15px;
       height: 15px;
       border-radius: 50%;
-      background: #f8fafc;
+      background: #ffffff;
       border: 2.5px solid #0284c7;
-      box-shadow: 0 1px 6px rgba(0, 0, 0, 0.65);
+      box-shadow: 0 1px 6px rgba(15, 23, 42, 0.45);
       transform: translate(-50%, -50%);
       pointer-events: none;
     }
@@ -173,7 +214,7 @@ export class SolarSkyJogSlider extends LitElement {
       display: flex;
       justify-content: space-between;
       font-size: 10px;
-      color: #94a3b8;
+      color: var(--bar-muted);
       font-variant-numeric: tabular-nums;
       margin-top: -2px;
     }
@@ -259,13 +300,12 @@ export class SolarSkyJogSlider extends LitElement {
   render() {
     const count = this.timeline.length;
     const activeSlot = this.timeline[this.currentIndex];
-    const pct =
-      count > 1 ? (this.currentIndex / (count - 1)) * 100 : 100;
+    const pct = count > 1 ? (this.currentIndex / (count - 1)) * 100 : 100;
     const isNow = this.currentIndex >= count - 1;
     const oldestSlot = this.timeline[0];
 
     return html`
-      <div class="bar">
+      <div class="bar" data-theme=${this.dark ? "dark" : "light"}>
         <div class="top-row">
           <div class="transport">
             <button

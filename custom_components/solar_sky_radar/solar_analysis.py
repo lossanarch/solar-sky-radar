@@ -105,7 +105,6 @@ def build_upwind_arrival_arcs_geojson(
             la, lo = destination_latlon(home_lat, home_lon, upwind_bearing_deg + float(offset), dist_km)
             arc_coords.append([round(lo, 5), round(la, 5)])
 
-        mid_lat, mid_lon = destination_latlon(home_lat, home_lon, upwind_bearing_deg, dist_km)
         features.append(
             {
                 "type": "Feature",
@@ -114,18 +113,6 @@ def build_upwind_arrival_arcs_geojson(
                     "kind": "arrival_arc",
                     "minutes": minutes,
                     "distance_km": round(dist_km, 1),
-                    "label": f"{minutes}m ({round(dist_km)} km)",
-                },
-            }
-        )
-        features.append(
-            {
-                "type": "Feature",
-                "geometry": {"type": "Point", "coordinates": [round(mid_lon, 5), round(mid_lat, 5)]},
-                "properties": {
-                    "kind": "arrival_label",
-                    "minutes": minutes,
-                    "label": f"{minutes} min upwind",
                 },
             }
         )

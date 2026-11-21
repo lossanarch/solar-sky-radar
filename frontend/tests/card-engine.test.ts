@@ -1,7 +1,13 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { StyleSpecification } from "maplibre-gl";
 import { FramePlayer } from "../src/map/frame-player";
+import { sanitizeVectorStyleForPrivacy } from "../src/map/map-controller";
 import { sampleWindUV } from "../src/map/wind-particles";
-import type { ManifestPayload, WindPayload } from "../src/types";
+import {
+  resolveAutoplayMode,
+  type ManifestPayload,
+  type WindPayload,
+} from "../src/types";
 
 const MOCK_MANIFEST: ManifestPayload = {
   updated_epoch: 2200,
@@ -105,19 +111,113 @@ describe("FramePlayer", () => {
     expect(player.index).toBe(2);
     expect(player.length).toBe(3);
 
-    // Step +1 from latest wraps to oldest (index 0)
     player.step(1);
     expect(player.index).toBe(0);
 
-    // Step -1 from oldest wraps back to latest (index 2)
     player.step(-1);
     expect(player.index).toBe(2);
 
-    // Direct seek
     player.seek(1, true);
     expect(player.index).toBe(1);
     expect(visited).toEqual([2, 0, 2, 1]);
     player.destroy();
+  });
+
+  it("supports single-play 2-hour loop that stops automatically on Now", async () => {
+    vi.useFakeTimers();
+    try {
+      const states: boolean[] = [];
+      const visited: number[] = [];
+      // Ensure window.setTimeout / clearTimeout exist in Node test env
+      vi.stubGlobal("window", globalThis);
+
+      const player = new FramePlayer(
+        () => ({
+          fetchWithAuth: async () => new Response(null, { status: 404 }),
+        }),
+        (resolved) => visited.push(resolved.index),
+        () => {},
+        (playing) => states.push(playing)
+      );
+      player.setLayerFlags({
+        trueColour: false,
+        cloudOverlay: false,
+        cloudMode: "cloud_mask",
+        radar: false,
+      });
+
+      await player.loadManifest(MOCK_MANIFEST, false);
+      expect(player.index).toBe(2);
+
+      // Single-play starts from oldest (-2h, index 0) and halts at latest (Now, index 2)
+      player.play(true);
+      expect(player.isPlaying).toBe(true);
+      expect(player.index).toBe(0);
+
+      vi.advanceTimersByTime(450);
+      expect(player.index).toBe(1);
+      expect(player.isPlaying).toBe(true);
+
+      vi.advanceTimersByTime(450);
+      expect(player.index).toBe(2);
+      expect(player.isPlaying).toBe(false);
+      expect(states).toEqual([true, false]);
+
+      player.destroy();
+    } finally {
+      vi.unstubAllGlobals();
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("resolveAutoplayMode & sanitizeVectorStyleForPrivacy", () => {
+  it("resolves autoplay_mode and legacy flags cleanly", () => {
+    expect(resolveAutoplayMode({ type: "x" })).toBe("off");
+    expect(resolveAutoplayMode({ type: "x", autoplay: true })).toBe("loop");
+    expect(resolveAutoplayMode({ type: "x", autoplay_once: true })).toBe("once");
+    expect(resolveAutoplayMode({ type: "x", autoplay_mode: "once", autoplay: true })).toBe("once");
+  });
+
+  it("strips sprite and pattern/icon properties to prevent canvas getImageData readback", () => {
+    const raw: StyleSpecification = {
+      version: 8,
+      sprite: "https://tiles.openfreemap.org/sprites/ofm_f384/ofm",
+      glyphs: "https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf",
+      sources: {},
+      layers: [
+        {
+          id: "landcover_wood",
+          type: "fill",
+          source: "openmaptiles",
+          paint: { "fill-pattern": "wood" },
+        },
+        {
+          id: "highway_shield",
+          type: "symbol",
+          source: "openmaptiles",
+          layout: { "icon-image": "road_3" },
+        },
+        {
+          id: "label_town",
+          type: "symbol",
+          source: "openmaptiles",
+          layout: { "text-field": "{name}", "icon-image": "circle_11_black" },
+        },
+      ],
+    };
+
+    const clean = sanitizeVectorStyleForPrivacy(raw, false);
+    expect(clean.sprite).toBeUndefined();
+    expect(clean.layers.map((l) => l.id)).toEqual(["landcover_wood", "label_town"]);
+
+    const wood = clean.layers[0] as { paint: Record<string, unknown> };
+    expect(wood.paint["fill-pattern"]).toBeUndefined();
+    expect(wood.paint["fill-color"]).toBeDefined();
+
+    const town = clean.layers[1] as { layout: Record<string, unknown> };
+    expect(town.layout["icon-image"]).toBeUndefined();
+    expect(town.layout["text-field"]).toBe("{name}");
   });
 });
 

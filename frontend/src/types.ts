@@ -3,6 +3,7 @@ import type * as GeoJSON from "geojson";
 export type CloudRenderMode = "cloud_mask" | "solar_cloud";
 export type WindAltitudeMode = "850hPa" | "10m";
 export type BasemapTheme = "auto" | "dark" | "light" | "bom_dark" | "bom_light";
+export type AutoplayMode = "off" | "once" | "loop";
 
 export interface SolarSkyRadarCardConfig {
   type: string;
@@ -35,8 +36,23 @@ export interface SolarSkyRadarCardConfig {
   show_solar_hud?: boolean;
   show_legend?: boolean;
 
+  autoplay_mode?: AutoplayMode;
   autoplay?: boolean;
+  autoplay_once?: boolean;
   playback_speed?: number;
+}
+
+export function resolveAutoplayMode(config: SolarSkyRadarCardConfig): AutoplayMode {
+  if (
+    config.autoplay_mode === "off" ||
+    config.autoplay_mode === "once" ||
+    config.autoplay_mode === "loop"
+  ) {
+    return config.autoplay_mode;
+  }
+  if (config.autoplay_once) return "once";
+  if (config.autoplay) return "loop";
+  return "off";
 }
 
 export interface SatelliteFrameMeta {

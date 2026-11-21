@@ -29,6 +29,7 @@ export class FramePlayer {
 
   private currentIndex = 0;
   private playing = false;
+  private singleLoop = false;
   private speed = 1.0;
   private timerId: number | null = null;
   private destroyed = false;
@@ -43,7 +44,8 @@ export class FramePlayer {
   constructor(
     private getHass: () => HomeAssistantLike | undefined,
     private onFrameChange: (resolved: ResolvedFrameUrls) => void,
-    private onLoadProgress: (readySlots: boolean[]) => void
+    private onLoadProgress: (readySlots: boolean[]) => void,
+    private onPlayStateChange?: (playing: boolean) => void
   ) {}
 
   get length(): number {
@@ -238,17 +240,32 @@ export class FramePlayer {
     this.seek(next, false);
   }
 
-  play(): void {
-    if (this.playing || this.timeline.length <= 1) return;
+  play(once = false): void {
+    if (this.timeline.length <= 1) return;
+    if (this.timerId !== null) {
+      window.clearTimeout(this.timerId);
+      this.timerId = null;
+    }
+    this.singleLoop = once;
+    if (once || this.currentIndex >= this.timeline.length - 1) {
+      this.currentIndex = 0;
+      this.emitCurrent();
+    }
     this.playing = true;
+    this.onPlayStateChange?.(true);
     this.scheduleNextTick();
   }
 
   pause(): void {
+    const wasPlaying = this.playing;
     this.playing = false;
+    this.singleLoop = false;
     if (this.timerId !== null) {
       window.clearTimeout(this.timerId);
       this.timerId = null;
+    }
+    if (wasPlaying) {
+      this.onPlayStateChange?.(false);
     }
   }
 
@@ -256,7 +273,7 @@ export class FramePlayer {
     if (this.playing) {
       this.pause();
     } else {
-      this.play();
+      this.play(false);
     }
     return this.playing;
   }
@@ -272,6 +289,11 @@ export class FramePlayer {
   private scheduleNextTick(): void {
     if (!this.playing || this.destroyed || this.timeline.length <= 1) return;
     const isAtLatest = this.currentIndex >= this.timeline.length - 1;
+    if (this.singleLoop && isAtLatest) {
+      this.pause();
+      return;
+    }
+
     // Dwell longer on the latest ("Now") frame before looping back 2 hours
     const delayMs = isAtLatest ? Math.round(1350 / this.speed) : Math.round(420 / this.speed);
 
@@ -280,6 +302,10 @@ export class FramePlayer {
       const nextIdx = (this.currentIndex + 1) % this.timeline.length;
       this.currentIndex = nextIdx;
       this.emitCurrent();
+      if (this.singleLoop && nextIdx >= this.timeline.length - 1) {
+        this.pause();
+        return;
+      }
       this.scheduleNextTick();
     }, delayMs);
   }

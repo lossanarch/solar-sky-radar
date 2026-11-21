@@ -93,7 +93,7 @@ show_fires: true
 show_solar_rings: true
 show_solar_hud: true
 show_legend: true
-autoplay: false
+autoplay_mode: once          # off | once (plays 2h -> Live once when >=75% visible) | loop
 playback_speed: 1
 ```
 

@@ -20,6 +20,7 @@ export class WindStreamlineRenderer {
   private level: WindAltitudeMode = "850hPa";
   private visible = true;
   private opacity = 0.85;
+  private darkTheme = true;
   private particles: Particle[] = [];
   private animId: number | null = null;
   private isMoving = false;
@@ -80,11 +81,17 @@ export class WindStreamlineRenderer {
     this.updateLoopState();
   }
 
-  setOptions(visible: boolean, level: WindAltitudeMode, opacity: number): void {
-    const levelChanged = this.level !== level;
+  setOptions(
+    visible: boolean,
+    level: WindAltitudeMode,
+    opacity: number,
+    darkTheme = true
+  ): void {
+    const levelChanged = this.level !== level || this.darkTheme !== darkTheme;
     this.visible = visible;
     this.level = level;
     this.opacity = opacity;
+    this.darkTheme = darkTheme;
     this.canvas.style.opacity = String(opacity);
     this.canvas.style.display = visible ? "block" : "none";
     if (levelChanged) {
@@ -204,17 +211,30 @@ export class WindStreamlineRenderer {
         const pt0 = this.map.project([p.lon, p.lat]);
         const pt1 = this.map.project([nextLon, nextLat]);
 
-        // Colorize slightly by speed & altitude mode
+        // Colorize by speed, altitude mode, and light/dark basemap contrast
         const speedKmh = speedMs * 3.6;
-        if (speedKmh >= 55) {
-          this.ctx.strokeStyle = "rgba(251, 191, 36, 0.88)";
-        } else if (speedKmh >= 30) {
-          this.ctx.strokeStyle =
-            this.level === "850hPa"
-              ? "rgba(125, 211, 252, 0.86)"
-              : "rgba(167, 243, 208, 0.84)";
+        if (this.darkTheme) {
+          if (speedKmh >= 55) {
+            this.ctx.strokeStyle = "rgba(251, 191, 36, 0.88)";
+          } else if (speedKmh >= 30) {
+            this.ctx.strokeStyle =
+              this.level === "850hPa"
+                ? "rgba(125, 211, 252, 0.86)"
+                : "rgba(167, 243, 208, 0.84)";
+          } else {
+            this.ctx.strokeStyle = "rgba(226, 232, 240, 0.72)";
+          }
         } else {
-          this.ctx.strokeStyle = "rgba(226, 232, 240, 0.72)";
+          if (speedKmh >= 55) {
+            this.ctx.strokeStyle = "rgba(217, 119, 6, 0.9)";
+          } else if (speedKmh >= 30) {
+            this.ctx.strokeStyle =
+              this.level === "850hPa"
+                ? "rgba(2, 132, 199, 0.86)"
+                : "rgba(13, 148, 136, 0.84)";
+          } else {
+            this.ctx.strokeStyle = "rgba(51, 65, 85, 0.72)";
+          }
         }
 
         this.ctx.beginPath();

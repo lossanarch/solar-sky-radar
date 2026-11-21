@@ -19,6 +19,9 @@ import { WindStreamlineRenderer } from "./wind-particles";
 const OPENFREEMAP_DARK_STYLE = "https://tiles.openfreemap.org/styles/dark";
 const OPENFREEMAP_LIGHT_STYLE = "https://tiles.openfreemap.org/styles/positron";
 
+// Cache sanitized vector styles so switching or remounting cards requires zero extra fetches
+const SAFE_VECTOR_STYLE_CACHE = new Map<string, Promise<StyleSpecification>>();
+
 // 1x1 transparent PNG placeholder while initial WebP frame decodes
 const TRANSPARENT_1X1 =
   "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=";
@@ -27,6 +30,94 @@ const EMPTY_FC: GeoJSON.FeatureCollection = {
   type: "FeatureCollection",
   features: [],
 };
+
+function buildPlaceholderStyle(dark: boolean): StyleSpecification {
+  return {
+    version: 8,
+    sources: {},
+    layers: [
+      {
+        id: "ssr-placeholder-bg",
+        type: "background",
+        paint: { "background-color": dark ? "#0b1120" : "#f1f5f9" },
+      },
+    ],
+  };
+}
+
+/**
+ * Strip sprite sheets and pattern/icon lookups from vector styles so MapLibre GL JS
+ * never calls `canvas.getContext('2d').getImageData(...)` (avoiding browser canvas
+ * anti-fingerprinting prompts and striped placeholder artifacts while keeping crisp
+ * vector roads, coastlines, boundaries, and `.pbf` city/suburb labels).
+ */
+export function sanitizeVectorStyleForPrivacy(
+  raw: StyleSpecification,
+  dark: boolean
+): StyleSpecification {
+  const style = structuredClone(raw) as StyleSpecification & {
+    sprite?: unknown;
+  };
+  delete style.sprite;
+
+  style.layers = (style.layers ?? []).filter((layer) => {
+    const rec = layer as Record<string, unknown>;
+    const layout = rec.layout as Record<string, unknown> | undefined;
+    const paint = rec.paint as Record<string, unknown> | undefined;
+
+    if (layer.type === "symbol" && layout && "icon-image" in layout) {
+      if (!("text-field" in layout)) {
+        return false;
+      }
+      delete layout["icon-image"];
+      delete layout["icon-size"];
+      delete layout["icon-padding"];
+      delete layout["icon-offset"];
+      delete layout["icon-anchor"];
+      delete layout["icon-optional"];
+    }
+
+    if (paint) {
+      if ("fill-pattern" in paint) {
+        delete paint["fill-pattern"];
+        if (!("fill-color" in paint)) {
+          paint["fill-color"] = dark
+            ? "rgba(20, 45, 38, 0.22)"
+            : "rgba(187, 226, 198, 0.25)";
+        }
+      }
+      delete paint["line-pattern"];
+      delete paint["background-pattern"];
+    }
+
+    return true;
+  });
+
+  return style;
+}
+
+function fetchPrivacySafeVectorStyle(
+  url: string,
+  dark: boolean
+): Promise<StyleSpecification> {
+  const cached = SAFE_VECTOR_STYLE_CACHE.get(url);
+  if (cached) return cached;
+
+  const p = (async () => {
+    try {
+      const resp = await fetch(url, { mode: "cors" });
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const json = (await resp.json()) as StyleSpecification;
+      return sanitizeVectorStyleForPrivacy(json, dark);
+    } catch {
+      SAFE_VECTOR_STYLE_CACHE.delete(url);
+      return buildPlaceholderStyle(dark);
+    }
+  })();
+
+  SAFE_VECTOR_STYLE_CACHE.set(url, p);
+  return p;
+}
 
 function buildBomRasterStyle(
   dark: boolean,
@@ -90,6 +181,16 @@ function buildBomRasterStyle(
   return { version: 8, sources, layers };
 }
 
+export function resolveIsDark(
+  theme: BasemapTheme | undefined,
+  hass: HomeAssistantLike | undefined
+): boolean {
+  const t = theme ?? "auto";
+  if (t === "dark" || t === "bom_dark") return true;
+  if (t === "light" || t === "bom_light") return false;
+  return hass?.themes?.darkMode ?? true;
+}
+
 /**
  * Manages the MapLibre GL JS scene, keeping coastlines, roads, and suburb/city labels
  * pinned ABOVE the True Colour satellite, Visual Cloud, and Rain Radar rasters.
@@ -101,11 +202,13 @@ export class MapController {
   private homeMarker: maplibregl.Marker | null = null;
   private styleReady = false;
   private currentStyleKey = "";
+  private styleSeq = 0;
 
   private manifest: ManifestPayload | null = null;
   private hazards: HazardsPayload | null = null;
   private latestFrame: ResolvedFrameUrls | null = null;
   private config!: SolarSkyRadarCardConfig;
+  private destroyed = false;
 
   constructor(
     private container: HTMLElement,
@@ -119,17 +222,17 @@ export class MapController {
     const centerLon =
       config.center_longitude ?? this.getHass()?.config?.longitude ?? 144.9631;
     const zoom = config.zoom_level ?? 7.2;
+    const isDark = resolveIsDark(config.basemap_theme, this.getHass());
 
-    const { styleKey, style } = this.resolveStyle(config.basemap_theme ?? "auto");
-    this.currentStyleKey = styleKey;
-
+    // Disable `localIdeographFontFamily` so MapLibre never invokes TinySDF canvas pixel readback
     this.map = new maplibregl.Map({
       container: this.container,
-      style,
+      style: buildPlaceholderStyle(isDark),
       center: [centerLon, centerLat],
       zoom,
       minZoom: 3,
       maxZoom: 12,
+      localIdeographFontFamily: false,
       attributionControl: false,
       pitchWithRotate: false,
       dragRotate: false,
@@ -153,12 +256,6 @@ export class MapController {
     this.windRenderer = new WindStreamlineRenderer(this.container);
     this.windRenderer.attachMap(this.map);
 
-    this.map.on("load", () => {
-      this.styleReady = true;
-      this.setupOverlayLayers();
-      this.syncAllState();
-    });
-
     this.map.on("styledata", () => {
       if (this.map?.isStyleLoaded() && !this.map.getSource("ssr-true-colour")) {
         this.styleReady = true;
@@ -168,6 +265,7 @@ export class MapController {
     });
 
     this.updateHomeMarker(centerLat, centerLon);
+    void this.applyResolvedStyle(config.basemap_theme ?? "auto");
 
     this.resizeObserver = new ResizeObserver(() => {
       this.map?.resize();
@@ -176,34 +274,49 @@ export class MapController {
     this.resizeObserver.observe(this.container);
   }
 
-  private resolveStyle(theme: BasemapTheme): {
+  private computeStyleKey(theme: BasemapTheme): {
     styleKey: string;
-    style: string | StyleSpecification;
+    isDark: boolean;
   } {
-    const haDark = this.getHass()?.themes?.darkMode ?? true;
-    const isDark = theme === "auto" ? haDark : theme === "dark" || theme === "bom_dark";
+    const isDark = resolveIsDark(theme, this.getHass());
     const bm = this.manifest?.providers.basemap;
-
     if ((theme === "bom_dark" || theme === "bom_light") && bm) {
       const baseUrl =
         theme === "bom_dark" ? bm.bom_dark_tiles : bm.bom_light_tiles;
       if (baseUrl) {
-        return {
-          styleKey: theme,
-          style: buildBomRasterStyle(
-            theme === "bom_dark",
-            baseUrl,
-            bm.bom_towns_overlay,
-            bm.bom_borders_overlay
-          ),
-        };
+        return { styleKey: theme, isDark: theme === "bom_dark" };
       }
     }
+    return { styleKey: isDark ? "ofm_dark" : "ofm_light", isDark };
+  }
 
-    return {
-      styleKey: isDark ? "ofm_dark" : "ofm_light",
-      style: isDark ? OPENFREEMAP_DARK_STYLE : OPENFREEMAP_LIGHT_STYLE,
-    };
+  private async applyResolvedStyle(theme: BasemapTheme): Promise<void> {
+    if (!this.map || this.destroyed) return;
+    const { styleKey, isDark } = this.computeStyleKey(theme);
+    if (styleKey === this.currentStyleKey) return;
+
+    this.currentStyleKey = styleKey;
+    const seq = ++this.styleSeq;
+    const bm = this.manifest?.providers.basemap;
+
+    let styleSpec: StyleSpecification;
+    if ((styleKey === "bom_dark" || styleKey === "bom_light") && bm) {
+      const baseUrl =
+        styleKey === "bom_dark" ? bm.bom_dark_tiles! : bm.bom_light_tiles!;
+      styleSpec = buildBomRasterStyle(
+        styleKey === "bom_dark",
+        baseUrl,
+        bm.bom_towns_overlay,
+        bm.bom_borders_overlay
+      );
+    } else {
+      const url = isDark ? OPENFREEMAP_DARK_STYLE : OPENFREEMAP_LIGHT_STYLE;
+      styleSpec = await fetchPrivacySafeVectorStyle(url, isDark);
+    }
+
+    if (this.destroyed || !this.map || seq !== this.styleSeq) return;
+    this.styleReady = false;
+    this.map.setStyle(styleSpec);
   }
 
   /**
@@ -213,13 +326,11 @@ export class MapController {
   private findOverlayAnchorLayerId(): string | undefined {
     if (!this.map) return undefined;
     const layers = this.map.getStyle()?.layers ?? [];
-    // On BOM custom style, insert right before borders/town labels
     const bomAnchor = layers.find(
       (l) => l.id === "bom-borders-top" || l.id === "bom-towns-label-top"
     );
     if (bomAnchor) return bomAnchor.id;
 
-    // On OpenFreeMap vector styles, insert before major highways, boundaries, and all text symbols
     const vecAnchor = layers.find(
       (l) =>
         l.type === "symbol" ||
@@ -247,6 +358,7 @@ export class MapController {
     if (!this.map || this.map.getSource("ssr-true-colour")) return;
     const anchorId = this.findOverlayAnchorLayerId();
     const coords = this.defaultCoords();
+    const isDark = resolveIsDark(this.config.basemap_theme, this.getHass());
 
     // 1. Satellite Visible True Colour Image Source
     this.map.addSource("ssr-true-colour", {
@@ -308,7 +420,7 @@ export class MapController {
       anchorId
     );
 
-    // Add a crisp vector coastline outline ABOVE weather rasters when vector water source exists
+    // Crisp vector coastline outline ABOVE weather rasters
     const styleSources = this.map.getStyle()?.sources ?? {};
     if (styleSources["openmaptiles"] && !this.map.getLayer("ssr-coastline-crisp")) {
       try {
@@ -319,7 +431,9 @@ export class MapController {
             source: "openmaptiles",
             "source-layer": "water",
             paint: {
-              "line-color": "rgba(148, 163, 184, 0.65)",
+              "line-color": isDark
+                ? "rgba(148, 163, 184, 0.65)"
+                : "rgba(51, 65, 85, 0.58)",
               "line-width": ["interpolate", ["linear"], ["zoom"], 4, 0.7, 9, 1.35],
             },
           },
@@ -330,7 +444,7 @@ export class MapController {
       }
     }
 
-    // 4. Upwind Solar Arrival Arcs (15m / 30m / 60m) — drawn on top of labels/roads
+    // 4. Upwind Solar Arrival Arcs (15m / 30m / 60m) — clean colour-coded dashed lines only (no text clutter)
     this.map.addSource("ssr-solar-arcs", {
       type: "geojson",
       data: this.manifest?.solar?.arrival_arcs_geojson ?? EMPTY_FC,
@@ -345,14 +459,14 @@ export class MapController {
           "match",
           ["get", "minutes"],
           15,
-          "#38bdf8",
+          isDark ? "#38bdf8" : "#0284c7",
           30,
-          "#fbbf24",
-          "#f87171",
+          isDark ? "#fbbf24" : "#d97706",
+          isDark ? "#f87171" : "#dc2626",
         ],
-        "line-width": 1.75,
+        "line-width": 2.0,
         "line-dasharray": [3, 2.5],
-        "line-opacity": 0.88,
+        "line-opacity": 0.9,
       },
     });
     this.map.addLayer({
@@ -361,25 +475,9 @@ export class MapController {
       source: "ssr-solar-arcs",
       filter: ["==", ["get", "kind"], "approach_vector"],
       paint: {
-        "line-color": "#38bdf8",
-        "line-width": 1.5,
-        "line-opacity": 0.65,
-      },
-    });
-    this.map.addLayer({
-      id: "ssr-solar-arcs-label",
-      type: "symbol",
-      source: "ssr-solar-arcs",
-      filter: ["==", ["get", "kind"], "arrival_label"],
-      layout: {
-        "text-field": ["get", "label"],
-        "text-size": 11,
-        "text-offset": [0, -0.6],
-      },
-      paint: {
-        "text-color": "#e0f2fe",
-        "text-halo-color": "rgba(15, 23, 42, 0.92)",
-        "text-halo-width": 1.5,
+        "line-color": isDark ? "#38bdf8" : "#0284c7",
+        "line-width": 1.6,
+        "line-opacity": 0.7,
       },
     });
 
@@ -549,9 +647,10 @@ export class MapController {
       el.style.width = "14px";
       el.style.height = "14px";
       el.style.borderRadius = "9999px";
-      el.style.background = "#38bdf8";
-      el.style.border = "2.5px solid #f8fafc";
-      el.style.boxShadow = "0 0 0 4px rgba(56, 189, 248, 0.32), 0 2px 6px rgba(0,0,0,0.6)";
+      el.style.background = "#0ea5e9";
+      el.style.border = "2.5px solid #ffffff";
+      el.style.boxShadow =
+        "0 0 0 4px rgba(14, 165, 233, 0.30), 0 2px 6px rgba(15, 23, 42, 0.55)";
       el.title = "Home / Solar PV Array";
       this.homeMarker = new maplibregl.Marker({ element: el })
         .setLngLat([lon, lat])
@@ -565,18 +664,15 @@ export class MapController {
     this.config = config;
     if (!this.map) return;
 
-    const { styleKey, style } = this.resolveStyle(config.basemap_theme ?? "auto");
-    if (styleKey !== this.currentStyleKey) {
-      this.currentStyleKey = styleKey;
-      this.styleReady = false;
-      this.map.setStyle(style);
-    }
+    const isDark = resolveIsDark(config.basemap_theme, this.getHass());
+    void this.applyResolvedStyle(config.basemap_theme ?? "auto");
 
     this.syncLayerVisibilityAndOpacity();
     this.windRenderer?.setOptions(
       config.show_wind ?? true,
       config.wind_level ?? "850hPa",
-      config.wind_opacity ?? 0.85
+      config.wind_opacity ?? 0.85,
+      isDark
     );
   }
 
@@ -595,7 +691,6 @@ export class MapController {
       this.config.center_longitude ?? manifest.location.longitude
     );
 
-    // Re-evaluate BOM basemap if selected once manifest arrives
     if (
       this.config.basemap_theme === "bom_dark" ||
       this.config.basemap_theme === "bom_light"
@@ -617,11 +712,13 @@ export class MapController {
   }
 
   setWind(wind: WindPayload | null): void {
+    const isDark = resolveIsDark(this.config.basemap_theme, this.getHass());
     this.windRenderer?.setWindData(wind);
     this.windRenderer?.setOptions(
       this.config.show_wind ?? true,
       this.config.wind_level ?? "850hPa",
-      this.config.wind_opacity ?? 0.85
+      this.config.wind_opacity ?? 0.85,
+      isDark
     );
   }
 
@@ -668,7 +765,6 @@ export class MapController {
       return;
     }
 
-    // Show strikes occurring within the 35 minutes leading up to `frameEpoch`
     const active = this.hazards.lightning.features
       .filter((f) => {
         const ep = Number(f.properties?.epoch ?? 0);
@@ -715,7 +811,6 @@ export class MapController {
     const ringsOn = this.config.show_solar_rings ?? true;
     setVis("ssr-solar-arcs-line", ringsOn);
     setVis("ssr-solar-vector-line", ringsOn);
-    setVis("ssr-solar-arcs-label", ringsOn);
 
     const firesOn = this.config.show_fires ?? true;
     setVis("ssr-fires-glow", firesOn);
@@ -758,6 +853,7 @@ export class MapController {
   }
 
   destroy(): void {
+    this.destroyed = true;
     this.resizeObserver?.disconnect();
     this.windRenderer?.destroy();
     this.homeMarker?.remove();

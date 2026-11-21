@@ -102,6 +102,35 @@ PREVIEW_HTML = """<!DOCTYPE html>
       --divider-color: rgba(148, 163, 184, 0.16);
       --primary-color: #38bdf8;
     }
+    body[data-ha-theme="light"] {
+      color-scheme: light;
+      --primary-background-color: #fafafa;
+      --ha-card-background: #ffffff;
+      --card-background-color: #ffffff;
+      --secondary-background-color: #f1f5f9;
+      --primary-text-color: #212121;
+      --secondary-text-color: #5f6368;
+      --divider-color: rgba(15, 23, 42, 0.14);
+      --primary-color: #0284c7;
+      background: #f1f5f9;
+    }
+    body[data-ha-theme="light"] header.topbar,
+    body[data-ha-theme="light"] .panel {
+      background: #ffffff;
+      box-shadow: 0 4px 16px rgba(15, 23, 42, 0.08);
+    }
+    body[data-ha-theme="light"] .entity-row {
+      background: #f8fafc;
+      border-color: rgba(15, 23, 42, 0.1);
+    }
+    body[data-ha-theme="light"] .entity-name,
+    body[data-ha-theme="light"] .source-list strong,
+    body[data-ha-theme="light"] #regime-pill {
+      color: #0f172a !important;
+    }
+    body[data-ha-theme="light"] .entity-val {
+      color: #0284c7;
+    }
     * { box-sizing: border-box; }
     body {
       margin: 0;
@@ -278,6 +307,7 @@ PREVIEW_HTML = """<!DOCTYPE html>
       <button class="preset-btn" data-preset="tokyo">Tokyo</button>
       <button class="preset-btn" data-preset="london">London</button>
       <button class="preset-btn" data-preset="new_york">New York</button>
+      <button class="preset-btn" id="theme-toggle-btn" type="button">HA Theme: Dark</button>
     </div>
   </header>
 
@@ -357,7 +387,7 @@ PREVIEW_HTML = """<!DOCTYPE html>
       title: "Melbourne Solar & Sky Radar",
       map_height: 540,
       zoom_level: 7.4,
-      basemap_theme: "dark",
+      basemap_theme: "auto",
       show_true_colour: true,
       true_colour_opacity: 0.88,
       show_cloud_overlay: true,
@@ -372,11 +402,12 @@ PREVIEW_HTML = """<!DOCTYPE html>
       show_solar_rings: true,
       show_solar_hud: true,
       show_legend: true,
-      autoplay: false,
+      autoplay_mode: "once",
       playback_speed: 1,
     };
 
     let hassState = {
+      themes: { darkMode: true },
       config: {
         latitude: -37.8136,
         longitude: 144.9631,
@@ -392,6 +423,15 @@ PREVIEW_HTML = """<!DOCTYPE html>
     card.hass = hassState;
     editor.setConfig(currentConfig);
     editor.hass = hassState;
+
+    document.getElementById("theme-toggle-btn").addEventListener("click", (ev) => {
+      const nextDark = !(hassState.themes?.darkMode ?? true);
+      document.body.dataset.haTheme = nextDark ? "dark" : "light";
+      ev.currentTarget.textContent = `HA Theme: ${nextDark ? "Dark" : "Light"}`;
+      hassState = { ...hassState, themes: { darkMode: nextDark } };
+      card.hass = hassState;
+      editor.hass = hassState;
+    });
 
     editor.addEventListener("config-changed", (ev) => {
       currentConfig = { ...ev.detail.config };

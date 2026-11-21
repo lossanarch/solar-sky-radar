@@ -9,6 +9,19 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import FlowResult
+from homeassistant.helpers.selector import (
+    BooleanSelector,
+    NumberSelector,
+    NumberSelectorConfig,
+    NumberSelectorMode,
+    SelectOptionDict,
+    SelectSelector,
+    SelectSelectorConfig,
+    SelectSelectorMode,
+    TextSelector,
+    TextSelectorConfig,
+    TextSelectorType,
+)
 
 from .const import (
     CONF_ENABLE_BOM_FTP,
@@ -54,29 +67,85 @@ RADAR_CHOICES = {
 }
 
 
+def _normalize_input(user_input: dict[str, Any]) -> dict[str, Any]:
+    """Normalize numeric and optional selector values from ha-form."""
+    cleaned = dict(user_input)
+    cleaned[CONF_LATITUDE] = float(cleaned[CONF_LATITUDE])
+    cleaned[CONF_LONGITUDE] = float(cleaned[CONF_LONGITUDE])
+    cleaned[CONF_RADIUS_DEG] = round(float(cleaned[CONF_RADIUS_DEG]), 2)
+    cleaned[CONF_UPDATE_MINUTES] = int(round(float(cleaned[CONF_UPDATE_MINUTES])))
+    cleaned[CONF_FIRMS_MAP_KEY] = str(cleaned.get(CONF_FIRMS_MAP_KEY) or "").strip()
+    return cleaned
+
+
 def _build_schema(defaults: dict[str, Any]) -> vol.Schema:
+    sat_options = [SelectOptionDict(value=k, label=v) for k, v in SATELLITE_CHOICES.items()]
+    radar_options = [SelectOptionDict(value=k, label=v) for k, v in RADAR_CHOICES.items()]
+
     return vol.Schema(
         {
-            vol.Required(CONF_LATITUDE, default=defaults[CONF_LATITUDE]): vol.All(
-                vol.Coerce(float), vol.Range(min=-80.0, max=80.0)
+            vol.Required(CONF_LATITUDE, default=float(defaults[CONF_LATITUDE])): NumberSelector(
+                NumberSelectorConfig(
+                    min=-80.0,
+                    max=80.0,
+                    step="any",
+                    unit_of_measurement="°",
+                    mode=NumberSelectorMode.BOX,
+                )
             ),
-            vol.Required(CONF_LONGITUDE, default=defaults[CONF_LONGITUDE]): vol.All(
-                vol.Coerce(float), vol.Range(min=-180.0, max=180.0)
+            vol.Required(CONF_LONGITUDE, default=float(defaults[CONF_LONGITUDE])): NumberSelector(
+                NumberSelectorConfig(
+                    min=-180.0,
+                    max=180.0,
+                    step="any",
+                    unit_of_measurement="°",
+                    mode=NumberSelectorMode.BOX,
+                )
             ),
-            vol.Required(CONF_RADIUS_DEG, default=defaults[CONF_RADIUS_DEG]): vol.All(
-                vol.Coerce(float), vol.Range(min=1.2, max=8.0)
+            vol.Required(CONF_RADIUS_DEG, default=float(defaults[CONF_RADIUS_DEG])): NumberSelector(
+                NumberSelectorConfig(
+                    min=1.2,
+                    max=8.0,
+                    step=0.2,
+                    unit_of_measurement="°",
+                    mode=NumberSelectorMode.SLIDER,
+                )
             ),
-            vol.Required(CONF_SATELLITE_PROVIDER, default=defaults[CONF_SATELLITE_PROVIDER]): vol.In(
-                SATELLITE_CHOICES
+            vol.Required(
+                CONF_SATELLITE_PROVIDER, default=defaults[CONF_SATELLITE_PROVIDER]
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=sat_options,
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
             ),
-            vol.Required(CONF_RADAR_PROVIDER, default=defaults[CONF_RADAR_PROVIDER]): vol.In(
-                RADAR_CHOICES
+            vol.Required(
+                CONF_RADAR_PROVIDER, default=defaults[CONF_RADAR_PROVIDER]
+            ): SelectSelector(
+                SelectSelectorConfig(
+                    options=radar_options,
+                    mode=SelectSelectorMode.DROPDOWN,
+                )
             ),
-            vol.Optional(CONF_FIRMS_MAP_KEY, default=defaults.get(CONF_FIRMS_MAP_KEY, "")): str,
-            vol.Required(CONF_ENABLE_DEA_HOTSPOTS, default=defaults[CONF_ENABLE_DEA_HOTSPOTS]): bool,
-            vol.Required(CONF_ENABLE_BOM_FTP, default=defaults[CONF_ENABLE_BOM_FTP]): bool,
-            vol.Required(CONF_UPDATE_MINUTES, default=defaults[CONF_UPDATE_MINUTES]): vol.All(
-                vol.Coerce(int), vol.Range(min=2, max=30)
+            vol.Optional(
+                CONF_FIRMS_MAP_KEY, default=defaults.get(CONF_FIRMS_MAP_KEY, "")
+            ): TextSelector(TextSelectorConfig(type=TextSelectorType.PASSWORD)),
+            vol.Required(
+                CONF_ENABLE_DEA_HOTSPOTS, default=bool(defaults[CONF_ENABLE_DEA_HOTSPOTS])
+            ): BooleanSelector(),
+            vol.Required(
+                CONF_ENABLE_BOM_FTP, default=bool(defaults[CONF_ENABLE_BOM_FTP])
+            ): BooleanSelector(),
+            vol.Required(
+                CONF_UPDATE_MINUTES, default=int(defaults[CONF_UPDATE_MINUTES])
+            ): NumberSelector(
+                NumberSelectorConfig(
+                    min=2,
+                    max=30,
+                    step=1,
+                    unit_of_measurement="min",
+                    mode=NumberSelectorMode.SLIDER,
+                )
             ),
         }
     )
@@ -89,11 +158,12 @@ class SolarSkyRadarConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         if user_input is not None:
-            unique = f"{round(user_input[CONF_LATITUDE], 2)}_{round(user_input[CONF_LONGITUDE], 2)}"
+            cleaned = _normalize_input(user_input)
+            unique = f"{round(cleaned[CONF_LATITUDE], 2)}_{round(cleaned[CONF_LONGITUDE], 2)}"
             await self.async_set_unique_id(unique)
             self._abort_if_unique_id_configured()
-            title = f"{NAME} ({user_input[CONF_LATITUDE]:.2f}, {user_input[CONF_LONGITUDE]:.2f})"
-            return self.async_create_entry(title=title, data=user_input)
+            title = f"{NAME} ({cleaned[CONF_LATITUDE]:.2f}, {cleaned[CONF_LONGITUDE]:.2f})"
+            return self.async_create_entry(title=title, data=cleaned)
 
         ha_lat = getattr(self.hass.config, "latitude", None) or DEFAULT_LATITUDE
         ha_lon = getattr(self.hass.config, "longitude", None) or DEFAULT_LONGITUDE
@@ -124,7 +194,7 @@ class SolarSkyRadarOptionsFlow(config_entries.OptionsFlow):
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+            return self.async_create_entry(title="", data=_normalize_input(user_input))
 
         merged = {
             CONF_LATITUDE: DEFAULT_LATITUDE,

@@ -1,11 +1,13 @@
 import { LitElement, css, html } from "lit";
 import { property, state } from "lit/decorators.js";
-import type {
-  BasemapTheme,
-  CloudRenderMode,
-  HomeAssistantLike,
-  SolarSkyRadarCardConfig,
-  WindAltitudeMode,
+import {
+  resolveAutoplayMode,
+  type AutoplayMode,
+  type BasemapTheme,
+  type CloudRenderMode,
+  type HomeAssistantLike,
+  type SolarSkyRadarCardConfig,
+  type WindAltitudeMode,
 } from "./types";
 
 export class SolarSkyRadarCardEditor extends LitElement {
@@ -18,63 +20,101 @@ export class SolarSkyRadarCardEditor extends LitElement {
     :host {
       display: block;
       font-family: var(--paper-font-body1_-_font-family, system-ui, sans-serif);
-      color: var(--primary-text-color, #e2e8f0);
+      color: var(--primary-text-color, #1e293b);
     }
 
     .section {
       margin-bottom: 16px;
-      padding: 12px;
-      border-radius: 10px;
-      background: rgba(30, 41, 59, 0.45);
-      border: 1px solid rgba(148, 163, 184, 0.2);
+      padding: 14px;
+      border-radius: 12px;
+      background: var(--secondary-background-color, rgba(148, 163, 184, 0.12));
+      border: 1px solid var(--divider-color, rgba(148, 163, 184, 0.3));
     }
 
     .section-title {
-      font-size: 13px;
+      font-size: 12px;
       font-weight: 700;
       text-transform: uppercase;
-      letter-spacing: 0.04em;
-      margin-bottom: 10px;
-      color: #38bdf8;
+      letter-spacing: 0.05em;
+      margin-bottom: 12px;
+      padding-left: 8px;
+      border-left: 3px solid var(--primary-color, #0284c7);
+      color: var(--primary-text-color, #0f172a);
     }
 
     .grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 10px;
+      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+      gap: 12px;
     }
 
     label.field {
       display: flex;
       flex-direction: column;
-      gap: 4px;
+      gap: 5px;
       font-size: 12.5px;
+      font-weight: 500;
+      color: var(--primary-text-color, #1e293b);
+    }
+
+    .field-hint {
+      font-size: 11px;
+      font-weight: 400;
+      color: var(--secondary-text-color, #64748b);
     }
 
     label.toggle {
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 8px;
-      padding: 6px 0;
+      gap: 10px;
+      padding: 7px 0;
       font-size: 13px;
+      color: var(--primary-text-color, #1e293b);
       cursor: pointer;
     }
 
     input[type="text"],
     input[type="number"],
     select {
-      padding: 7px 9px;
-      border-radius: 7px;
-      border: 1px solid rgba(148, 163, 184, 0.35);
-      background: rgba(15, 23, 42, 0.8);
-      color: inherit;
+      padding: 8px 10px;
+      border-radius: 8px;
+      border: 1px solid var(--divider-color, rgba(100, 116, 139, 0.45));
+      background: var(--card-background-color, var(--ha-card-background, #ffffff));
+      color: var(--primary-text-color, #0f172a);
       font-size: 13px;
+      outline: none;
+      transition: border-color 0.14s ease, box-shadow 0.14s ease;
+    }
+
+    input[type="text"]::placeholder {
+      color: var(--secondary-text-color, #64748b);
+      opacity: 0.85;
+    }
+
+    input[type="text"]:focus,
+    input[type="number"]:focus,
+    select:focus {
+      border-color: var(--primary-color, #0284c7);
+      box-shadow: 0 0 0 2px rgba(2, 132, 199, 0.18);
+    }
+
+    select option {
+      background: var(--card-background-color, var(--ha-card-background, #ffffff));
+      color: var(--primary-text-color, #0f172a);
+    }
+
+    input[type="checkbox"] {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--primary-color, #0284c7);
+      cursor: pointer;
+      flex-shrink: 0;
     }
 
     input[type="range"] {
       width: 100%;
-      accent-color: #38bdf8;
+      accent-color: var(--primary-color, #0284c7);
     }
   `;
 
@@ -82,11 +122,7 @@ export class SolarSkyRadarCardEditor extends LitElement {
     this.config = { ...config };
   }
 
-  private updateField<K extends keyof SolarSkyRadarCardConfig>(
-    key: K,
-    value: SolarSkyRadarCardConfig[K]
-  ): void {
-    const next = { ...this.config, [key]: value };
+  private emitConfig(next: SolarSkyRadarCardConfig): void {
     this.config = next;
     this.dispatchEvent(
       new CustomEvent("config-changed", {
@@ -97,8 +133,27 @@ export class SolarSkyRadarCardEditor extends LitElement {
     );
   }
 
+  private updateField<K extends keyof SolarSkyRadarCardConfig>(
+    key: K,
+    value: SolarSkyRadarCardConfig[K]
+  ): void {
+    this.emitConfig({ ...this.config, [key]: value });
+  }
+
+  private updateAutoplayMode(mode: AutoplayMode): void {
+    const next: SolarSkyRadarCardConfig = {
+      ...this.config,
+      autoplay_mode: mode,
+      autoplay: mode === "loop",
+      autoplay_once: mode === "once",
+    };
+    this.emitConfig(next);
+  }
+
   render() {
     const c = this.config;
+    const autoplayMode = resolveAutoplayMode(c);
+
     return html`
       <div class="section">
         <div class="section-title">Map & Location</div>
@@ -152,7 +207,7 @@ export class SolarSkyRadarCardEditor extends LitElement {
               min="280"
               max="960"
               step="10"
-              .value=${String(c.map_height ?? 480)}
+              .value=${String(c.map_height ?? 490)}
               @change=${(e: Event) =>
                 this.updateField(
                   "map_height",
@@ -174,14 +229,14 @@ export class SolarSkyRadarCardEditor extends LitElement {
               this.updateField("show_true_colour", (e.target as HTMLInputElement).checked)}
           />
         </label>
-        <label class="field">
-          <span>True Colour Opacity (${Math.round((c.true_colour_opacity ?? 0.85) * 100)}%)</span>
+        <label class="field" style="margin-bottom: 8px;">
+          <span>True Colour Opacity (${Math.round((c.true_colour_opacity ?? 0.84) * 100)}%)</span>
           <input
             type="range"
             min="0.1"
             max="1"
             step="0.05"
-            .value=${String(c.true_colour_opacity ?? 0.85)}
+            .value=${String(c.true_colour_opacity ?? 0.84)}
             @input=${(e: Event) =>
               this.updateField(
                 "true_colour_opacity",
@@ -202,7 +257,7 @@ export class SolarSkyRadarCardEditor extends LitElement {
               )}
           />
         </label>
-        <div class="grid">
+        <div class="grid" style="margin-bottom: 8px;">
           <label class="field">
             <span>Cloud Overlay Mode</span>
             <select
@@ -255,7 +310,7 @@ export class SolarSkyRadarCardEditor extends LitElement {
               this.updateField("show_wind", (e.target as HTMLInputElement).checked)}
           />
         </label>
-        <label class="field">
+        <label class="field" style="margin-bottom: 8px;">
           <span>Wind Streamline Altitude</span>
           <select
             .value=${c.wind_level ?? "850hPa"}
@@ -315,14 +370,26 @@ export class SolarSkyRadarCardEditor extends LitElement {
           />
         </label>
 
-        <label class="toggle">
-          <span>Autoplay 2-Hour Loop on Open</span>
-          <input
-            type="checkbox"
-            .checked=${c.autoplay ?? false}
+        <label class="field" style="margin-top: 8px;">
+          <span>2-Hour Playback When Visible (&ge;75% on Screen)</span>
+          <select
+            .value=${autoplayMode}
             @change=${(e: Event) =>
-              this.updateField("autoplay", (e.target as HTMLInputElement).checked)}
-          />
+              this.updateAutoplayMode(
+                (e.target as HTMLSelectElement).value as AutoplayMode
+              )}
+          >
+            <option value="off">Off (Manual Play / Scrub)</option>
+            <option value="once">
+              Single Play 2-Hour Loop When Shown (Plays Once to Live)
+            </option>
+            <option value="loop">
+              Continuous 2-Hour Loop While Visible
+            </option>
+          </select>
+          <span class="field-hint">
+            Triggers automatically once scrolling uncovers at least 75% of the map, and pauses when scrolled off-screen.
+          </span>
         </label>
       </div>
     `;

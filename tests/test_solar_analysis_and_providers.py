@@ -66,7 +66,11 @@ def test_solar_analysis_clear_vs_patchy_vs_upwind_eta() -> None:
     assert res.approaching_cloud_eta_min is not None
     assert 15 <= res.approaching_cloud_eta_min <= 45
     assert res.regime == "storm_approaching"
-    assert len(res.arrival_arcs_geojson["features"]) >= 6
+    assert len(res.arrival_arcs_geojson["features"]) == 4
+    assert all(
+        f["properties"]["kind"] in ("arrival_arc", "approach_vector")
+        for f in res.arrival_arcs_geojson["features"]
+    )
 
     # 2) Patchy broken cumulus checkerboard right over home -> high patchiness & ramping risk
     checker = np.zeros((240, 240), dtype=np.float32)
