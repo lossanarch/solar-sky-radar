@@ -3,6 +3,8 @@ import maplibregl, {
   type GeoJSONSource,
   type ImageSource,
   type Map as MapLibreMap,
+  type MapGeoJSONFeature,
+  type MapMouseEvent,
   type StyleSpecification,
 } from "maplibre-gl";
 import type {
@@ -31,6 +33,86 @@ const EMPTY_FC: GeoJSON.FeatureCollection = {
   features: [],
 };
 
+const COMPASS_16 = [
+  "N",
+  "NNE",
+  "NE",
+  "ENE",
+  "E",
+  "ESE",
+  "SE",
+  "SSE",
+  "S",
+  "SSW",
+  "SW",
+  "WSW",
+  "W",
+  "WNW",
+  "NW",
+  "NNW",
+] as const;
+
+function computeDistanceBearing(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number
+): { distanceKm: number; compass: string } {
+  const toRad = Math.PI / 180;
+  const p1 = lat1 * toRad;
+  const p2 = lat2 * toRad;
+  const dp = (lat2 - lat1) * toRad;
+  const dl = (lon2 - lon1) * toRad;
+  const a =
+    Math.sin(dp / 2) ** 2 +
+    Math.cos(p1) * Math.cos(p2) * Math.sin(dl / 2) ** 2;
+  const distanceKm =
+    Math.round(2 * 6371 * Math.asin(Math.min(1, Math.sqrt(a))) * 10) / 10;
+
+  const y = Math.sin(dl) * Math.cos(p2);
+  const x =
+    Math.cos(p1) * Math.sin(p2) -
+    Math.sin(p1) * Math.cos(p2) * Math.cos(dl);
+  const brng = ((Math.atan2(y, x) * 180) / Math.PI + 360) % 360;
+  const compass = COMPASS_16[Math.round(brng / 22.5) % 16];
+  return { distanceKm, compass };
+}
+
+function formatAgeLabel(
+  hoursAgoRaw: unknown,
+  epochRaw: unknown,
+  timeZone?: string
+): string {
+  const hours = Number(hoursAgoRaw);
+  let rel = "";
+  if (Number.isFinite(hours) && hours >= 0) {
+    if (hours < 1) {
+      rel = `${Math.max(1, Math.round(hours * 60))}m ago`;
+    } else {
+      rel = `${hours.toFixed(1)}h ago`;
+    }
+  }
+  const ep = Number(epochRaw);
+  if (Number.isFinite(ep) && ep > 1_000_000_000) {
+    const dt = new Date(ep * 1000);
+    let clock: string;
+    try {
+      clock = dt.toLocaleTimeString([], {
+        hour: "numeric",
+        minute: "2-digit",
+        ...(timeZone ? { timeZone } : {}),
+      });
+    } catch {
+      clock = dt.toLocaleTimeString([], {
+        hour: "numeric",
+        minute: "2-digit",
+      });
+    }
+    return rel ? `${rel} (${clock})` : clock;
+  }
+  return rel || "Recent";
+}
+
 function buildFallbackStyle(dark: boolean): StyleSpecification {
   return {
     version: 8,
@@ -39,7 +121,7 @@ function buildFallbackStyle(dark: boolean): StyleSpecification {
       {
         id: "ssr-fallback-bg",
         type: "background",
-        paint: { "background-color": dark ? "#0b1120" : "#e2e8f0" },
+        paint: { "background-color": dark ? "#13281d" : "#d8ebd2" },
       },
     ],
   };
@@ -48,10 +130,12 @@ function buildFallbackStyle(dark: boolean): StyleSpecification {
 /**
  * Tune a vector basemap style for weather/satellite overlay rendering & strict browser privacy:
  * 1. Strip `sprite`, `*-pattern`, and `icon-image` so MapLibre never invokes `canvas.getContext('2d').getImageData(...)`.
- * 2. Keep only OpenFreeMap-hosted PBF font stacks (`Noto Sans Regular/Bold/Italic`) so 404 TinySDF canvas fallback never fires.
- * 3. Upgrade town, suburb, city, road, and water labels from OpenFreeMap's dim 10px `#656565` / blurred-halo defaults
+ * 2. Restyle OpenFreeMap's monochrome white/grey/black landmass & water into natural cartographic
+ *    green land (parks, woodlands, terrain) and crisp ocean/bay/river blue water in both Light and Dark themes.
+ * 3. Keep only OpenFreeMap-hosted PBF font stacks (`Noto Sans Regular/Bold/Italic`) so 404 TinySDF canvas fallback never fires.
+ * 4. Upgrade town, suburb, city, road, and water labels from OpenFreeMap's dim 10px `#656565` / blurred-halo defaults
  *    to crisp, high-contrast meteorological typography with solid opaque halos (legible on WebKit iOS & desktop over clouds/radar).
- * 4. Ensure all `symbol` layers sit above all `fill` and `line` layers so polygons never cover weather rasters or labels.
+ * 5. Ensure all `symbol` layers sit above all `fill` and `line` layers so polygons never cover weather rasters or labels.
  */
 export function sanitizeVectorStyleForPrivacy(
   raw: StyleSpecification,
@@ -68,6 +152,7 @@ export function sanitizeVectorStyleForPrivacy(
   for (const layer of style.layers ?? []) {
     const id = layer.id.toLowerCase();
     const rec = layer as Record<string, unknown>;
+    const sourceLayer = String(rec["source-layer"] ?? "").toLowerCase();
     const layout = (rec.layout ?? {}) as Record<string, unknown>;
     const paint = (rec.paint ?? {}) as Record<string, unknown>;
 
@@ -98,37 +183,71 @@ export function sanitizeVectorStyleForPrivacy(
 
     if ("fill-pattern" in paint) {
       delete paint["fill-pattern"];
-      if (!("fill-color" in paint)) {
-        paint["fill-color"] = dark
-          ? "rgba(20, 45, 38, 0.22)"
-          : "rgba(187, 226, 198, 0.25)";
-      }
     }
     delete paint["line-pattern"];
     delete paint["background-pattern"];
 
-    // Soften major road & boundary lines that sit above satellite/radar so they guide orientation without overpowering echoes
+    // Cartographic green landmass & blue ocean/water palette when True Colour is toggled off
+    if (layer.type === "background") {
+      paint["background-color"] = dark ? "#13281d" : "#d8ebd2";
+    } else if (layer.type === "fill") {
+      if (id === "water" || sourceLayer === "water") {
+        paint["fill-color"] = dark ? "#0e2f52" : "#7cc0ec";
+        paint["fill-antialias"] = true;
+      } else if (id.includes("wood") || id.includes("forest")) {
+        paint["fill-color"] = dark ? "#1d3f2d" : "#b2d8a8";
+      } else if (id.includes("park") || id.includes("grass") || id.includes("wetland")) {
+        paint["fill-color"] = dark ? "#183626" : "#c2e2ba";
+      } else if (id.includes("residential")) {
+        paint["fill-color"] = dark
+          ? "rgba(24, 49, 36, 0.45)"
+          : "rgba(198, 222, 192, 0.45)";
+      } else if (id.includes("building")) {
+        paint["fill-color"] = dark ? "#183124" : "#cbe0c4";
+        paint["fill-outline-color"] = dark ? "#214231" : "#b8d2b0";
+      } else if (id.includes("pier")) {
+        paint["fill-color"] = dark ? "#1b3628" : "#cfe3c8";
+      } else if (id.includes("aeroway")) {
+        paint["fill-color"] = dark
+          ? "rgba(22, 43, 32, 0.72)"
+          : "rgba(214, 231, 210, 0.72)";
+      } else if (id.includes("ice") || id.includes("glacier")) {
+        paint["fill-color"] = dark ? "#1c3b4d" : "#e6f4f8";
+      }
+    }
+
+    // Rivers, roads, railways & borders tuned over green land / satellite / radar
     if (layer.type === "line") {
-      if (id.includes("highway_major") || id.includes("highway_motorway")) {
+      if (sourceLayer === "waterway" || id.includes("waterway")) {
+        paint["line-color"] = dark ? "#1b5084" : "#55a5df";
+      } else if (id.includes("highway_major") || id.includes("highway_motorway")) {
         if (id.includes("casing")) {
           paint["line-color"] = dark
-            ? "rgba(15, 23, 42, 0.42)"
-            : "rgba(255, 255, 255, 0.42)";
+            ? "rgba(12, 26, 19, 0.46)"
+            : "rgba(134, 165, 130, 0.42)";
         } else {
           paint["line-color"] = dark
-            ? "rgba(148, 163, 184, 0.34)"
-            : "rgba(71, 85, 105, 0.32)";
+            ? "rgba(148, 163, 184, 0.30)"
+            : "rgba(255, 255, 255, 0.54)";
         }
       } else if (id.includes("boundary")) {
         paint["line-color"] = dark
           ? "rgba(203, 213, 225, 0.46)"
           : "rgba(51, 65, 85, 0.44)";
+      } else if (
+        sourceLayer === "transportation" ||
+        sourceLayer === "aeroway" ||
+        id.includes("railway")
+      ) {
+        paint["line-color"] = dark
+          ? "rgba(96, 132, 112, 0.24)"
+          : "rgba(138, 168, 134, 0.36)";
       }
     }
 
-    // Upgrade text legibility for WebKit iOS & desktop over bright clouds, dark land/sea, and rain radar
+    // Upgrade text legibility for WebKit iOS & desktop over bright clouds, green/dark land, blue sea, and rain radar
     if (layer.type === "symbol" && "text-field" in layout) {
-      const haloDark = "rgba(9, 14, 26, 0.95)";
+      const haloDark = "rgba(9, 16, 14, 0.95)";
       const haloLight = "rgba(255, 255, 255, 0.96)";
 
       if (id.includes("city_capital") || id.includes("city_large")) {
@@ -202,7 +321,7 @@ export function sanitizeVectorStyleForPrivacy(
         ];
         paint["text-color"] = dark ? "#f1f5f9" : "#1e293b";
         paint["text-halo-color"] = dark
-          ? "rgba(9, 14, 26, 0.93)"
+          ? "rgba(9, 16, 14, 0.93)"
           : "rgba(255, 255, 255, 0.95)";
         paint["text-halo-width"] = 1.9;
         paint["text-halo-blur"] = 0.2;
@@ -221,15 +340,15 @@ export function sanitizeVectorStyleForPrivacy(
         ];
         paint["text-color"] = dark ? "#cbd5e1" : "#334155";
         paint["text-halo-color"] = dark
-          ? "rgba(9, 14, 26, 0.9)"
+          ? "rgba(9, 16, 14, 0.9)"
           : "rgba(255, 255, 255, 0.93)";
         paint["text-halo-width"] = 1.85;
         paint["text-halo-blur"] = 0.2;
       } else if (id.includes("water")) {
         layout["text-font"] = ["Noto Sans Italic"];
-        paint["text-color"] = dark ? "#93c5fd" : "#1e40af";
+        paint["text-color"] = dark ? "#93c5fd" : "#1d4ed8";
         paint["text-halo-color"] = dark
-          ? "rgba(9, 14, 26, 0.9)"
+          ? "rgba(8, 22, 38, 0.92)"
           : "rgba(255, 255, 255, 0.92)";
         paint["text-halo-width"] = 1.75;
         paint["text-halo-blur"] = 0.2;
@@ -247,7 +366,7 @@ export function sanitizeVectorStyleForPrivacy(
         ];
         paint["text-color"] = dark ? "#e2e8f0" : "#1e293b";
         paint["text-halo-color"] = dark
-          ? "rgba(9, 14, 26, 0.92)"
+          ? "rgba(9, 16, 14, 0.92)"
           : "rgba(255, 255, 255, 0.94)";
         paint["text-halo-width"] = 1.75;
         paint["text-halo-blur"] = 0.2;
@@ -315,7 +434,7 @@ function buildBomRasterStyle(
     {
       id: "bom-background",
       type: "background",
-      paint: { "background-color": dark ? "#0b1120" : "#dbeafe" },
+      paint: { "background-color": dark ? "#13281d" : "#d8ebd2" },
     },
     {
       id: "bom-base-layer",
@@ -386,6 +505,11 @@ export class MapController {
   private windRenderer: WindStreamlineRenderer | null = null;
   private resizeObserver: ResizeObserver | null = null;
   private homeMarker: maplibregl.Marker | null = null;
+  private hoverPopup: maplibregl.Popup | null = null;
+  private pinnedPopup: maplibregl.Popup | null = null;
+  private hoveredFireId = "";
+  private pinnedFireId = "";
+
   private styleReady = false;
   private currentStyleKey = "";
   private styleSeq = 0;
@@ -409,6 +533,20 @@ export class MapController {
   init(config: SolarSkyRadarCardConfig): void {
     this.config = config;
     this.mountPromise = this.mountInitialMap();
+  }
+
+  private getHomeLatLon(): [number, number] {
+    const lat =
+      this.config.center_latitude ??
+      this.manifest?.location.latitude ??
+      this.getHass()?.config?.latitude ??
+      -37.8136;
+    const lon =
+      this.config.center_longitude ??
+      this.manifest?.location.longitude ??
+      this.getHass()?.config?.longitude ??
+      144.9631;
+    return [lat, lon];
   }
 
   private computeStyleKey(theme: BasemapTheme): {
@@ -463,16 +601,7 @@ export class MapController {
     if (this.destroyed) return;
 
     this.currentStyleKey = styleKey;
-    const centerLat =
-      this.config.center_latitude ??
-      this.manifest?.location.latitude ??
-      this.getHass()?.config?.latitude ??
-      -37.8136;
-    const centerLon =
-      this.config.center_longitude ??
-      this.manifest?.location.longitude ??
-      this.getHass()?.config?.longitude ??
-      144.9631;
+    const [centerLat, centerLon] = this.getHomeLatLon();
     const zoom = this.config.zoom_level ?? 7.2;
 
     // Construct MapLibre directly with the resolved sanitized style (no startup setStyle race!)
@@ -517,6 +646,8 @@ export class MapController {
     this.map.on("load", ensureOverlays);
     this.map.on("idle", ensureOverlays);
 
+    this.attachHazardHoverAndClickHandlers();
+
     if (this.onMapInteract) {
       this.map.on("dragstart", this.onMapInteract);
       this.map.on("click", this.onMapInteract);
@@ -537,6 +668,287 @@ export class MapController {
     if (seq === this.styleSeq && latestKey !== this.currentStyleKey) {
       void this.applyStyleChange(this.config.basemap_theme ?? "auto");
     }
+  }
+
+  private queryFireFeatureAtPoint(e: MapMouseEvent): MapGeoJSONFeature | null {
+    if (!this.map) return null;
+    const layers: string[] = [];
+    if (this.map.getLayer("ssr-fires-core")) layers.push("ssr-fires-core");
+    if (this.map.getLayer("ssr-fires-glow")) layers.push("ssr-fires-glow");
+    if (layers.length === 0) return null;
+
+    const hits = this.map.queryRenderedFeatures(e.point, { layers });
+    return hits[0] ?? null;
+  }
+
+  private buildFirePopupNode(
+    p: Record<string, unknown>,
+    coords: [number, number],
+    pinned: boolean
+  ): HTMLElement {
+    const root = document.createElement("div");
+    root.className = "ssr-fire-tooltip";
+
+    // Header row: Incident title / hotspot title + category/severity pill
+    const header = document.createElement("div");
+    header.className = "ssr-fire-header";
+
+    const titleEl = document.createElement("div");
+    titleEl.className = "ssr-fire-title";
+    const incTitle = String(p.incident_title ?? "").trim();
+    const fireType = String(p.fire_type ?? "").trim();
+    const stateStr = String(p.state ?? "").trim();
+    titleEl.textContent =
+      incTitle ||
+      fireType ||
+      (stateStr ? `Thermal Hotspot · ${stateStr}` : "Active Fire Hotspot");
+    header.appendChild(titleEl);
+
+    const badge = document.createElement("span");
+    const alertLevel = String(p.alert_level ?? "").trim();
+    const kind = String(p.kind ?? "");
+    const intensity = String(p.intensity ?? "").trim();
+    let badgeTone = "hotspot";
+    let badgeText = intensity || "Hotspot";
+
+    if (alertLevel) {
+      badgeText = alertLevel;
+      const al = alertLevel.toLowerCase();
+      if (al.includes("emergency")) badgeTone = "emergency";
+      else if (al.includes("watch")) badgeTone = "watch";
+      else badgeTone = "advice";
+    } else if (kind === "planned_burn" || fireType.toLowerCase().includes("burn")) {
+      badgeText = "Planned Burn";
+      badgeTone = "burn";
+    } else if (fireType) {
+      badgeText = fireType;
+      badgeTone = "bushfire";
+    } else if (intensity) {
+      badgeText = `${intensity} FRP`;
+      badgeTone =
+        intensity === "Extreme" || intensity === "High" ? "bushfire" : "hotspot";
+    }
+    badge.className = `ssr-fire-badge ssr-fire-badge-${badgeTone}`;
+    badge.textContent = badgeText;
+    header.appendChild(badge);
+    root.appendChild(header);
+
+    // Sub-header: Distance & compass bearing from configured Home / Solar Array + coordinates
+    const [homeLat, homeLon] = this.getHomeLatLon();
+    const { distanceKm, compass } = computeDistanceBearing(
+      homeLat,
+      homeLon,
+      coords[1],
+      coords[0]
+    );
+    const sub = document.createElement("div");
+    sub.className = "ssr-fire-sub";
+    sub.textContent = `${distanceKm} km ${compass} from home · ${coords[1].toFixed(3)}°, ${coords[0].toFixed(3)}°`;
+    root.appendChild(sub);
+
+    // Key-value metadata rows
+    const grid = document.createElement("div");
+    grid.className = "ssr-fire-grid";
+
+    const addRow = (label: string, val: string) => {
+      if (!val) return;
+      const row = document.createElement("div");
+      row.className = "ssr-fire-row";
+      const k = document.createElement("span");
+      k.className = "ssr-fire-k";
+      k.textContent = label;
+      const v = document.createElement("span");
+      v.className = "ssr-fire-v";
+      v.textContent = val;
+      row.appendChild(k);
+      row.appendChild(v);
+      grid.appendChild(row);
+    };
+
+    const status = String(p.incident_status ?? "").trim();
+    if (status) {
+      addRow("Status", status);
+    }
+
+    const sizeTxt = String(p.size_text ?? "").trim();
+    const council = String(p.council_area ?? "").trim();
+    if (sizeTxt || council) {
+      addRow("Area / LGA", [sizeTxt, council].filter(Boolean).join(" · "));
+    }
+
+    const incAgency = String(p.incident_agency ?? "").trim();
+    const resources = Number(p.resources ?? 0);
+    if (incAgency || resources > 0) {
+      const crew =
+        resources > 0
+          ? `${resources} appliance${resources === 1 ? "" : "s"}`
+          : "";
+      addRow("Agency", [incAgency, crew].filter(Boolean).join(" · "));
+    }
+
+    const frpNum = Number(p.frp_mw);
+    if (Number.isFinite(frpNum) && frpNum > 0) {
+      addRow(
+        "Radiative Power",
+        intensity && intensity !== "Ground Report"
+          ? `${frpNum.toFixed(1)} MW (${intensity})`
+          : `${frpNum.toFixed(1)} MW`
+      );
+    }
+
+    const tempK = Number(p.temp_kelvin);
+    if (Number.isFinite(tempK) && tempK > 150) {
+      const tempC = (tempK - 273.15).toFixed(1);
+      addRow("Brightness Temp", `${tempC} °C (${tempK.toFixed(1)} K)`);
+    }
+
+    const sat = String(p.satellite ?? "").trim();
+    const inst = String(p.instrument ?? "").trim();
+    const acc = String(p.accuracy ?? "").trim();
+    if (sat || inst) {
+      const sensorLabel = [sat, inst].filter(Boolean).join(" · ");
+      addRow("Sensor", acc ? `${sensorLabel} (${acc})` : sensorLabel);
+    }
+
+    const conf = String(p.confidence ?? "").trim();
+    const daynight = String(p.daynight ?? "").trim();
+    if (conf) {
+      const confPretty =
+        conf.charAt(0).toUpperCase() + conf.slice(1);
+      addRow(
+        "Confidence",
+        daynight ? `${confPretty} · ${daynight}` : confPretty
+      );
+    }
+
+    addRow(
+      "Updated",
+      formatAgeLabel(p.hours_ago, p.epoch, this.getHass()?.config?.time_zone)
+    );
+
+    const provider = String(p.provider ?? "").trim();
+    if (provider) {
+      const srcParts = [provider];
+      if (incAgency && !provider.toLowerCase().includes(incAgency.toLowerCase())) {
+        srcParts.push(incAgency);
+      }
+      addRow("Source", srcParts.join(" + "));
+    }
+
+    root.appendChild(grid);
+
+    const incUrl = String(p.incident_url ?? "").trim();
+    const hasSafeUrl = incUrl.startsWith("https://");
+    if (pinned && hasSafeUrl) {
+      const link = document.createElement("a");
+      link.className = "ssr-fire-link";
+      link.href = incUrl;
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      link.textContent = "Open official incident report ↗";
+      root.appendChild(link);
+    } else if (!pinned && hasSafeUrl) {
+      const hint = document.createElement("div");
+      hint.className = "ssr-fire-hint";
+      hint.textContent = "Click hotspot to pin & open incident link";
+      root.appendChild(hint);
+    }
+
+    return root;
+  }
+
+  private attachHazardHoverAndClickHandlers(): void {
+    if (!this.map) return;
+
+    this.map.on("mousemove", (e) => {
+      if (!this.map) return;
+      const feat = this.queryFireFeatureAtPoint(e);
+      if (!feat || feat.geometry.type !== "Point") {
+        if (this.hoveredFireId) {
+          this.hoveredFireId = "";
+          this.map.getCanvas().style.cursor = "";
+        }
+        this.hoverPopup?.remove();
+        this.hoverPopup = null;
+        return;
+      }
+
+      this.map.getCanvas().style.cursor = "pointer";
+      const props = (feat.properties ?? {}) as Record<string, unknown>;
+      const fid = String(props.id ?? `${feat.geometry.coordinates[0]},${feat.geometry.coordinates[1]}`);
+      if (this.pinnedPopup && this.pinnedFireId === fid) {
+        this.hoverPopup?.remove();
+        this.hoverPopup = null;
+        return;
+      }
+
+      if (this.hoveredFireId === fid && this.hoverPopup) {
+        return;
+      }
+      this.hoveredFireId = fid;
+
+      const coords = feat.geometry.coordinates.slice(0, 2) as [number, number];
+      const node = this.buildFirePopupNode(props, coords, false);
+
+      this.hoverPopup?.remove();
+      this.hoverPopup = new maplibregl.Popup({
+        closeButton: false,
+        closeOnClick: false,
+        offset: 12,
+        maxWidth: "290px",
+        className: "ssr-map-popup ssr-map-popup-hover",
+      })
+        .setLngLat(coords)
+        .setDOMContent(node)
+        .addTo(this.map);
+    });
+
+    this.map.on("mouseout", () => {
+      this.hoveredFireId = "";
+      if (this.map) {
+        this.map.getCanvas().style.cursor = "";
+      }
+      this.hoverPopup?.remove();
+      this.hoverPopup = null;
+    });
+
+    this.map.on("click", (e) => {
+      if (!this.map) return;
+      const feat = this.queryFireFeatureAtPoint(e);
+      if (!feat || feat.geometry.type !== "Point") {
+        this.pinnedFireId = "";
+        this.pinnedPopup?.remove();
+        this.pinnedPopup = null;
+        return;
+      }
+
+      const props = (feat.properties ?? {}) as Record<string, unknown>;
+      const fid = String(props.id ?? `${feat.geometry.coordinates[0]},${feat.geometry.coordinates[1]}`);
+      const coords = feat.geometry.coordinates.slice(0, 2) as [number, number];
+
+      this.hoverPopup?.remove();
+      this.hoverPopup = null;
+      this.pinnedPopup?.remove();
+
+      this.pinnedFireId = fid;
+      const node = this.buildFirePopupNode(props, coords, true);
+      this.pinnedPopup = new maplibregl.Popup({
+        closeButton: true,
+        closeOnClick: false,
+        offset: 12,
+        maxWidth: "300px",
+        className: "ssr-map-popup ssr-map-popup-pinned",
+      })
+        .setLngLat(coords)
+        .setDOMContent(node)
+        .addTo(this.map);
+
+      this.pinnedPopup.on("close", () => {
+        if (this.pinnedFireId === fid) {
+          this.pinnedFireId = "";
+        }
+      });
+    });
   }
 
   private async applyStyleChange(theme: BasemapTheme): Promise<void> {
@@ -617,8 +1029,7 @@ export class MapController {
     if (this.manifest?.bbox?.coordinates) {
       return this.manifest.bbox.coordinates;
     }
-    const lat = this.config.center_latitude ?? -37.8136;
-    const lon = this.config.center_longitude ?? 144.9631;
+    const [lat, lon] = this.getHomeLatLon();
     return [
       [lon - 4.4, lat + 3.5],
       [lon + 4.4, lat + 3.5],
@@ -655,7 +1066,7 @@ export class MapController {
       rad: initRad === TRANSPARENT_1X1 ? "" : initRad,
     };
 
-    // 1. Satellite Visible True Colour Image Source
+    // 1. Satellite Visible True Colour Image Source (100% opacity by default)
     this.map.addSource("ssr-true-colour", {
       type: "image",
       url: initTc,
@@ -670,7 +1081,7 @@ export class MapController {
           visibility: (this.config.show_true_colour ?? true) ? "visible" : "none",
         },
         paint: {
-          "raster-opacity": this.config.true_colour_opacity ?? 0.88,
+          "raster-opacity": this.config.true_colour_opacity ?? 1.0,
           "raster-fade-duration": 0,
           "raster-resampling": "linear",
         },
@@ -733,8 +1144,8 @@ export class MapController {
             "source-layer": "water",
             paint: {
               "line-color": isDark
-                ? "rgba(148, 163, 184, 0.7)"
-                : "rgba(30, 41, 59, 0.62)",
+                ? "rgba(96, 165, 250, 0.52)"
+                : "rgba(25, 76, 130, 0.56)",
               "line-width": ["interpolate", ["linear"], ["zoom"], 4, 0.75, 9, 1.4],
             },
           },
@@ -788,7 +1199,7 @@ export class MapController {
       labelAnchorId
     );
 
-    // 5. NASA FIRMS / DEA Bushfire Hotspots
+    // 5. NASA FIRMS / DEA Hotspots + Official State Bushfires & Planned Burns
     this.map.addSource("ssr-fires", {
       type: "geojson",
       data: this.hazards?.fires ?? EMPTY_FC,
@@ -803,15 +1214,20 @@ export class MapController {
           ["linear"],
           ["coalesce", ["get", "frp_mw"], 10],
           2,
-          6,
+          7.5,
           40,
-          12,
+          13,
           150,
-          20,
+          21,
         ],
-        "circle-color": "#f97316",
-        "circle-opacity": 0.28,
-        "circle-blur": 0.65,
+        "circle-color": [
+          "case",
+          ["==", ["get", "kind"], "planned_burn"],
+          "#f59e0b",
+          "#f97316",
+        ],
+        "circle-opacity": 0.30,
+        "circle-blur": 0.62,
       },
     });
     this.map.addLayer({
@@ -824,58 +1240,31 @@ export class MapController {
           ["linear"],
           ["coalesce", ["get", "frp_mw"], 10],
           2,
-          3.2,
+          3.8,
           40,
-          5.8,
+          6.2,
           150,
-          9.5,
+          10.0,
         ],
         "circle-color": [
-          "step",
-          ["coalesce", ["get", "hours_ago"], 12],
-          "#fef08a",
-          3,
-          "#fb923c",
-          12,
-          "#ef4444",
-          24,
-          "#991b1b",
+          "case",
+          ["==", ["get", "kind"], "planned_burn"],
+          "#fbbf24",
+          [
+            "step",
+            ["coalesce", ["get", "hours_ago"], 12],
+            "#fef08a",
+            3,
+            "#fb923c",
+            12,
+            "#ef4444",
+            24,
+            "#b91c1c",
+          ],
         ],
-        "circle-stroke-color": "rgba(15, 23, 42, 0.9)",
-        "circle-stroke-width": 1.1,
+        "circle-stroke-color": "rgba(15, 23, 42, 0.92)",
+        "circle-stroke-width": 1.25,
       },
-    });
-
-    this.map.on("click", "ssr-fires-core", (e) => {
-      const feat = e.features?.[0];
-      if (!feat || feat.geometry.type !== "Point") return;
-      const p = feat.properties ?? {};
-      const coords = feat.geometry.coordinates.slice() as [number, number];
-      const popupNode = document.createElement("div");
-      popupNode.style.fontFamily = "system-ui, sans-serif";
-      popupNode.style.fontSize = "12px";
-      popupNode.style.color = "#0f172a";
-      popupNode.style.lineHeight = "1.45";
-
-      const title = document.createElement("strong");
-      title.textContent = `${p.provider ?? "Fire Hotspot"}`;
-      popupNode.appendChild(title);
-
-      const details = [
-        `Sensor: ${p.satellite ?? ""} ${p.instrument ?? ""}`,
-        `Radiative Power: ${p.frp_mw ?? "?"} MW (${p.temp_kelvin ?? "?"} K)`,
-        `Detected: ${p.hours_ago ?? "?"}h ago`,
-      ];
-      for (const line of details) {
-        const div = document.createElement("div");
-        div.textContent = line;
-        popupNode.appendChild(div);
-      }
-
-      new maplibregl.Popup({ closeButton: true, maxWidth: "240px" })
-        .setLngLat(coords)
-        .setDOMContent(popupNode)
-        .addTo(this.map!);
     });
 
     // 6. Time-Synced Blitzortung Lightning Strikes
@@ -1085,11 +1474,10 @@ export class MapController {
   }
 
   private updateTimeFilteredLightning(frameEpoch: number): void {
-    if (!this.map || !this.styleReady) return;
+    if (!this.map || !this.styleReady || !this.hazards?.lightning) return;
     const src = this.map.getSource("ssr-lightning") as GeoJSONSource | undefined;
     if (!src) return;
-
-    if (!(this.config.show_lightning ?? true) || !this.hazards?.lightning?.features) {
+    if (!(this.config.show_lightning ?? true)) {
       src.setData(EMPTY_FC);
       return;
     }
@@ -1129,7 +1517,7 @@ export class MapController {
     };
 
     setVis("ssr-true-colour-layer", this.config.show_true_colour ?? true);
-    setRasterOp("ssr-true-colour-layer", this.config.true_colour_opacity ?? 0.88);
+    setRasterOp("ssr-true-colour-layer", this.config.true_colour_opacity ?? 1.0);
 
     setVis("ssr-visual-cloud-layer", this.config.show_cloud_overlay ?? false);
     setRasterOp("ssr-visual-cloud-layer", this.config.cloud_opacity ?? 0.58);
@@ -1149,6 +1537,12 @@ export class MapController {
     const firesOn = this.config.show_fires ?? true;
     setVis("ssr-fires-glow", firesOn);
     setVis("ssr-fires-core", firesOn);
+    if (!firesOn) {
+      this.hoverPopup?.remove();
+      this.hoverPopup = null;
+      this.pinnedPopup?.remove();
+      this.pinnedPopup = null;
+    }
 
     const ltgOn = this.config.show_lightning ?? true;
     setVis("ssr-lightning-halo", ltgOn);
@@ -1164,16 +1558,7 @@ export class MapController {
 
   recenter(): void {
     if (!this.map) return;
-    const lat =
-      this.config.center_latitude ??
-      this.manifest?.location.latitude ??
-      this.getHass()?.config?.latitude ??
-      -37.8136;
-    const lon =
-      this.config.center_longitude ??
-      this.manifest?.location.longitude ??
-      this.getHass()?.config?.longitude ??
-      144.9631;
+    const [lat, lon] = this.getHomeLatLon();
     this.map.flyTo({
       center: [lon, lat],
       zoom: this.config.zoom_level ?? 7.2,
@@ -1190,6 +1575,8 @@ export class MapController {
     this.destroyed = true;
     this.resizeObserver?.disconnect();
     this.windRenderer?.destroy();
+    this.hoverPopup?.remove();
+    this.pinnedPopup?.remove();
     this.homeMarker?.remove();
     this.map?.remove();
     this.map = null;

@@ -255,6 +255,18 @@ describe("resolveAutoplayMode & sanitizeVectorStyleForPrivacy", () => {
       sources: {},
       layers: [
         {
+          id: "background",
+          type: "background",
+          paint: { "background-color": "rgb(242,243,240)" },
+        },
+        {
+          id: "water",
+          type: "fill",
+          source: "openmaptiles",
+          "source-layer": "water",
+          paint: { "fill-color": "rgb(194, 200, 202)" },
+        },
+        {
           id: "water_name",
           type: "symbol",
           source: "openmaptiles",
@@ -300,18 +312,24 @@ describe("resolveAutoplayMode & sanitizeVectorStyleForPrivacy", () => {
 
     const cleanDark = sanitizeVectorStyleForPrivacy(raw, true);
     expect(cleanDark.sprite).toBeUndefined();
-    // Fills come first, shields/icon-only dropped, symbols ordered on top
+    // Background & fills come first, shields/icon-only dropped, symbols ordered on top
     expect(cleanDark.layers.map((l) => l.id)).toEqual([
+      "background",
+      "water",
       "landcover_wood",
       "water_name",
       "place_town",
     ]);
 
-    const wood = cleanDark.layers[0] as { paint: Record<string, unknown> };
+    const bgDark = cleanDark.layers[0] as { paint: Record<string, unknown> };
+    const waterDark = cleanDark.layers[1] as { paint: Record<string, unknown> };
+    const wood = cleanDark.layers[2] as { paint: Record<string, unknown> };
+    expect(bgDark.paint["background-color"]).toBe("#13281d");
+    expect(waterDark.paint["fill-color"]).toBe("#0e2f52");
     expect(wood.paint["fill-pattern"]).toBeUndefined();
-    expect(wood.paint["fill-color"]).toBeDefined();
+    expect(wood.paint["fill-color"]).toBe("#1d3f2d");
 
-    const townDark = cleanDark.layers[2] as {
+    const townDark = cleanDark.layers[4] as {
       layout: Record<string, unknown>;
       paint: Record<string, unknown>;
     };
@@ -322,7 +340,12 @@ describe("resolveAutoplayMode & sanitizeVectorStyleForPrivacy", () => {
     expect(townDark.paint["text-halo-blur"]).toBe(0.2);
 
     const cleanLight = sanitizeVectorStyleForPrivacy(raw, false);
-    const townLight = cleanLight.layers[2] as { paint: Record<string, unknown> };
+    const bgLight = cleanLight.layers[0] as { paint: Record<string, unknown> };
+    const waterLight = cleanLight.layers[1] as { paint: Record<string, unknown> };
+    expect(bgLight.paint["background-color"]).toBe("#d8ebd2");
+    expect(waterLight.paint["fill-color"]).toBe("#7cc0ec");
+
+    const townLight = cleanLight.layers[4] as { paint: Record<string, unknown> };
     expect(townLight.paint["text-color"]).toBe("#0f172a");
     expect(townLight.paint["text-halo-color"]).toBe("rgba(255, 255, 255, 0.96)");
     expect(townLight.paint["text-halo-width"]).toBe(2.0);

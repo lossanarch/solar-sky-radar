@@ -230,13 +230,13 @@ export class SolarSkyRadarCardEditor extends LitElement {
           />
         </label>
         <label class="field" style="margin-bottom: 8px;">
-          <span>True Colour Opacity (${Math.round((c.true_colour_opacity ?? 0.88) * 100)}%)</span>
+          <span>True Colour Opacity (${Math.round((c.true_colour_opacity ?? 1.0) * 100)}%)</span>
           <input
             type="range"
             min="0.1"
             max="1"
             step="0.05"
-            .value=${String(c.true_colour_opacity ?? 0.88)}
+            .value=${String(c.true_colour_opacity ?? 1.0)}
             @input=${(e: Event) =>
               this.updateField(
                 "true_colour_opacity",

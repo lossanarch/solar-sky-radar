@@ -389,7 +389,7 @@ PREVIEW_HTML = """<!DOCTYPE html>
       zoom_level: 7.4,
       basemap_theme: "auto",
       show_true_colour: true,
-      true_colour_opacity: 0.88,
+      true_colour_opacity: 1.0,
       show_cloud_overlay: false,
       cloud_mode: "solar_cloud",
       cloud_opacity: 0.58,

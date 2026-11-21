@@ -7,7 +7,12 @@ from datetime import datetime, timezone
 import numpy as np
 
 from custom_components.solar_sky_radar.engine import RadarSkyEngine
-from custom_components.solar_sky_radar.providers.firms import parse_firms_csv
+from custom_components.solar_sky_radar.providers.firms import (
+    enrich_hotspots_with_incidents,
+    parse_firms_csv,
+    parse_nsw_rfs_geojson,
+    parse_vic_emergency_geojson,
+)
 from custom_components.solar_sky_radar.providers.geostationary import BoundingBox
 from custom_components.solar_sky_radar.providers.lightning import (
     LightningStrikeBuffer,
@@ -93,11 +98,106 @@ def test_firms_csv_parsing() -> None:
         "-37.5000,145.1000,342.5,0.4,0.4,2026-11-20,0315,N20,VIIRS,h,2.0NRT,295.1,28.4,D\n"
         "-38.1200,144.4500,318.2,0.5,0.5,2026-11-20,0240,N20,VIIRS,n,2.0NRT,289.4,8.7,D\n"
     )
-    parsed = parse_firms_csv(sample_csv, "VIIRS_NOAA20_NRT", now_epoch=1_795_146_000)
+    parsed = parse_firms_csv(
+        sample_csv,
+        "VIIRS_NOAA20_NRT",
+        now_epoch=1_795_146_000,
+        home_lat=-37.8136,
+        home_lon=144.9631,
+    )
     assert len(parsed) == 2
     assert parsed[0]["properties"]["frp_mw"] == 28.4
+    assert parsed[0]["properties"]["intensity"] == "Moderate"
+    assert parsed[0]["properties"]["temp_celsius"] == 69.4
     assert parsed[0]["properties"]["confidence"] == "high"
     assert parsed[0]["properties"]["instrument"] == "VIIRS"
+    assert parsed[0]["properties"]["satellite"] == "NOAA-20"
+    assert parsed[0]["properties"]["daynight"] == "Daytime pass"
+    assert parsed[0]["properties"]["accuracy"] == "0.40 × 0.40 km"
+    assert parsed[0]["properties"]["distance_km"] > 30.0
+    assert parsed[0]["properties"]["bearing_compass"] in ("N", "NNE", "NE")
+
+
+def test_state_fire_incidents_and_hotspot_enrichment() -> None:
+    bbox = BoundingBox(west=141.0, south=-39.5, east=152.0, north=-33.0)
+    vic_payload = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {
+                    "type": "GeometryCollection",
+                    "geometries": [{"type": "Point", "coordinates": [145.102, -37.502]}],
+                },
+                "properties": {
+                    "id": 991,
+                    "category1": "Fire",
+                    "category2": "Bushfire",
+                    "status": "Responding",
+                    "sourceOrg": "CFA",
+                    "sourceFeed": "cfa-incident",
+                    "sourceTitle": "Whittlesea Rd",
+                    "location": "Whittlesea",
+                    "sizeFmt": "45 Ha.",
+                    "resources": 4,
+                    "updated": "2026-11-20T03:10:00Z",
+                },
+            },
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [145.0, -37.8]},
+                "properties": {
+                    "id": 992,
+                    "category1": "Tree Down",
+                    "category2": "Tree Down",
+                    "sourceFeed": "ses-incident",
+                },
+            },
+        ],
+    }
+    nsw_payload = {
+        "type": "FeatureCollection",
+        "features": [
+            {
+                "type": "Feature",
+                "geometry": {"type": "Point", "coordinates": [150.834, -35.045]},
+                "properties": {
+                    "title": "BEECROFT RANGE FIRE",
+                    "category": "Advice",
+                    "link": "https://www.rfs.nsw.gov.au/fire-information/fires-near-me",
+                    "description": (
+                        "ALERT LEVEL: Advice <br />LOCATION: BEECROFT <br />"
+                        "COUNCIL AREA: Shoalhaven <br />STATUS: Being controlled <br />"
+                        "TYPE: Bush Fire <br />FIRE: Yes <br />SIZE: 410 ha <br />"
+                        "RESPONSIBLE AGENCY: Rural Fire Service"
+                    ),
+                },
+            }
+        ],
+    }
+
+    vic_inc = parse_vic_emergency_geojson(vic_payload, bbox, 1_795_146_000, -37.8136, 144.9631)
+    assert len(vic_inc) == 1
+    assert vic_inc[0]["properties"]["fire_type"] == "Bushfire"
+    assert vic_inc[0]["properties"]["resources"] == 4
+
+    nsw_inc = parse_nsw_rfs_geojson(nsw_payload, bbox, 1_795_146_000, -37.8136, 144.9631)
+    assert len(nsw_inc) == 1
+    assert nsw_inc[0]["properties"]["size_text"] == "410 ha"
+    assert nsw_inc[0]["properties"]["council_area"] == "Shoalhaven"
+
+    hotspot = {
+        "type": "Feature",
+        "geometry": {"type": "Point", "coordinates": [145.100, -37.500]},
+        "properties": {"id": "hs-1", "provider": "Geoscience Australia DEA", "frp_mw": 35.0},
+    }
+    merged = enrich_hotspots_with_incidents([hotspot], [*vic_inc, *nsw_inc], match_radius_km=6.0)
+    # Nearby VicEmergency incident enriches hs-1; distant NSW RFS incident is appended standalone
+    assert len(merged) == 2
+    assert merged[0]["properties"]["incident_title"] == "Whittlesea Rd (Whittlesea)"
+    assert merged[0]["properties"]["incident_status"] == "Responding"
+    assert merged[0]["properties"]["size_text"] == "45 Ha."
+    assert merged[1]["properties"]["incident_title"] == "BEECROFT RANGE FIRE"
 
 
 def test_blitzortung_lzw_and_hass_state_ingestion() -> None:

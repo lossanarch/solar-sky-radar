@@ -24,7 +24,7 @@ const DEFAULT_CONFIG: SolarSkyRadarCardConfig = {
   zoom_level: 7.2,
   map_height: 490,
   show_true_colour: true,
-  true_colour_opacity: 0.88,
+  true_colour_opacity: 1.0,
   show_cloud_overlay: false,
   cloud_mode: "solar_cloud",
   cloud_opacity: 0.58,
@@ -603,6 +603,179 @@ export class SolarSkyRadarCard extends LitElement {
           font-size: 10.5px;
         }
       }
+
+      /* Fire Hotspot & Bushfire Incident Hover / Click Popups */
+      .ssr-map-popup .maplibregl-popup-content {
+        background: var(--ssr-glass-bg);
+        backdrop-filter: blur(12px);
+        -webkit-backdrop-filter: blur(12px);
+        border: 1px solid var(--ssr-glass-border);
+        border-radius: 10px;
+        padding: 10px 12px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.36);
+        color: var(--ssr-text);
+        font-family: inherit;
+        pointer-events: none;
+      }
+
+      .ssr-map-popup-pinned .maplibregl-popup-content {
+        pointer-events: auto;
+        padding-right: 24px;
+      }
+
+      .ssr-map-popup .maplibregl-popup-close-button {
+        color: var(--ssr-muted);
+        font-size: 16px;
+        padding: 4px 7px;
+        line-height: 1;
+      }
+
+      .ssr-map-popup .maplibregl-popup-close-button:hover {
+        color: var(--ssr-text);
+        background: transparent;
+      }
+
+      .ssr-map-popup.maplibregl-popup-anchor-bottom .maplibregl-popup-tip {
+        border-top-color: var(--ssr-glass-bg);
+      }
+      .ssr-map-popup.maplibregl-popup-anchor-top .maplibregl-popup-tip {
+        border-bottom-color: var(--ssr-glass-bg);
+      }
+      .ssr-map-popup.maplibregl-popup-anchor-left .maplibregl-popup-tip {
+        border-right-color: var(--ssr-glass-bg);
+      }
+      .ssr-map-popup.maplibregl-popup-anchor-right .maplibregl-popup-tip {
+        border-left-color: var(--ssr-glass-bg);
+      }
+
+      .ssr-fire-tooltip {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        min-width: 215px;
+      }
+
+      .ssr-fire-header {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      .ssr-fire-title {
+        font-size: 12.5px;
+        font-weight: 700;
+        line-height: 1.3;
+        color: var(--ssr-text);
+      }
+
+      .ssr-fire-badge {
+        flex-shrink: 0;
+        padding: 2px 6px;
+        border-radius: 9999px;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+      }
+
+      .ssr-fire-badge-emergency {
+        background: rgba(220, 38, 38, 0.24);
+        color: #fca5a5;
+        border: 1px solid rgba(239, 68, 68, 0.55);
+      }
+      .card-shell.theme-light .ssr-fire-badge-emergency {
+        background: rgba(220, 38, 38, 0.14);
+        color: #b91c1c;
+      }
+
+      .ssr-fire-badge-watch,
+      .ssr-fire-badge-bushfire {
+        background: rgba(249, 115, 22, 0.22);
+        color: #fdba74;
+        border: 1px solid rgba(249, 115, 22, 0.48);
+      }
+      .card-shell.theme-light .ssr-fire-badge-watch,
+      .card-shell.theme-light .ssr-fire-badge-bushfire {
+        background: rgba(234, 88, 12, 0.14);
+        color: #c2410c;
+      }
+
+      .ssr-fire-badge-burn,
+      .ssr-fire-badge-advice {
+        background: rgba(245, 158, 11, 0.20);
+        color: #fcd34d;
+        border: 1px solid rgba(245, 158, 11, 0.45);
+      }
+      .card-shell.theme-light .ssr-fire-badge-burn,
+      .card-shell.theme-light .ssr-fire-badge-advice {
+        background: rgba(217, 119, 6, 0.14);
+        color: #92400e;
+      }
+
+      .ssr-fire-badge-hotspot {
+        background: rgba(251, 146, 60, 0.18);
+        color: #fed7aa;
+        border: 1px solid rgba(251, 146, 60, 0.38);
+      }
+      .card-shell.theme-light .ssr-fire-badge-hotspot {
+        background: rgba(234, 88, 12, 0.12);
+        color: #9a3412;
+      }
+
+      .ssr-fire-sub {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--ssr-accent);
+        padding-bottom: 4px;
+        border-bottom: 1px solid var(--ssr-glass-border);
+      }
+
+      .ssr-fire-grid {
+        display: flex;
+        flex-direction: column;
+        gap: 3px;
+      }
+
+      .ssr-fire-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 10px;
+        font-size: 11.2px;
+        line-height: 1.35;
+      }
+
+      .ssr-fire-k {
+        color: var(--ssr-muted);
+        flex-shrink: 0;
+      }
+
+      .ssr-fire-v {
+        color: var(--ssr-text);
+        font-weight: 600;
+        text-align: right;
+      }
+
+      .ssr-fire-hint {
+        margin-top: 2px;
+        font-size: 10px;
+        color: var(--ssr-muted);
+        text-align: right;
+      }
+
+      .ssr-fire-link {
+        margin-top: 3px;
+        display: inline-block;
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--ssr-accent);
+        text-decoration: none;
+      }
+
+      .ssr-fire-link:hover {
+        text-decoration: underline;
+      }
     `,
   ];
 
@@ -1169,14 +1342,14 @@ export class SolarSkyRadarCard extends LitElement {
                       <div class="mixer-row">
                         <span
                           >True Colour
-                          (${Math.round((this.config.true_colour_opacity ?? 0.88) * 100)}%)</span
+                          (${Math.round((this.config.true_colour_opacity ?? 1.0) * 100)}%)</span
                         >
                         <input
                           type="range"
                           min="0.1"
                           max="1"
                           step="0.05"
-                          .value=${String(this.config.true_colour_opacity ?? 0.88)}
+                          .value=${String(this.config.true_colour_opacity ?? 1.0)}
                           @input=${(e: Event) =>
                             this.setConfig({
                               ...this.config,

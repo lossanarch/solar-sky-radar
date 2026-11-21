@@ -79,10 +79,10 @@ map_height: 500
 zoom_level: 7.4
 basemap_theme: auto          # auto | dark | light | bom_dark | bom_light
 show_true_colour: true
-true_colour_opacity: 0.88
-show_cloud_overlay: true
+true_colour_opacity: 1.0
+show_cloud_overlay: false
 cloud_mode: solar_cloud      # solar_cloud | cloud_mask
-cloud_opacity: 0.76
+cloud_opacity: 0.58
 show_radar: true
 radar_opacity: 0.82
 show_wind: true
