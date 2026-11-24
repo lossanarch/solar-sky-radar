@@ -1,13 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
 import type { StyleSpecification } from "maplibre-gl";
 import { FramePlayer } from "../src/map/frame-player";
-import { sanitizeVectorStyleForPrivacy } from "../src/map/map-controller";
+import {
+  clearVectorStyleCacheForTests,
+  fetchPrivacySafeVectorStyle,
+  sanitizeVectorStyleForPrivacy,
+} from "../src/map/map-controller";
 import { sampleWindUV } from "../src/map/wind-particles";
 import {
   resolveAutoplayMode,
   type ManifestPayload,
   type WindPayload,
 } from "../src/types";
+import { defineCustomElementSafely } from "../src/utils/register-custom-element";
 
 const MOCK_MANIFEST: ManifestPayload = {
   updated_epoch: 2200,
@@ -385,5 +390,133 @@ describe("sampleWindUV", () => {
 
     expect(sampleWindUV(windPayload, "850hPa", 145, -45)).toBeNull();
     expect(sampleWindUV(windPayload, "850hPa", 152, -38)).toBeNull();
+  });
+});
+
+describe("iOS WebKit & Home Assistant resilience guards", () => {
+  it("defineCustomElementSafely handles duplicate imports, __haScopedRegistryReady, and registry swaps", async () => {
+    class FakeRegistry {
+      public defs = new Map<string, CustomElementConstructor>();
+      public waiters = new Map<string, Array<() => void>>();
+
+      get(name: string): CustomElementConstructor | undefined {
+        return this.defs.get(name);
+      }
+      define(name: string, ctor: CustomElementConstructor): void {
+        if (this.defs.has(name)) {
+          throw new Error(`Already defined: ${name}`);
+        }
+        this.defs.set(name, ctor);
+        const list = this.waiters.get(name) ?? [];
+        this.waiters.delete(name);
+        for (const fn of list) fn();
+      }
+      whenDefined(name: string): Promise<CustomElementConstructor> {
+        const existing = this.defs.get(name);
+        if (existing) return Promise.resolve(existing);
+        return new Promise((resolve) => {
+          const list = this.waiters.get(name) ?? [];
+          list.push(() => resolve(this.defs.get(name)!));
+          this.waiters.set(name, list);
+        });
+      }
+    }
+
+    const DummyCtor = class {} as unknown as CustomElementConstructor;
+
+    // 1. Synchronous registration + idempotent duplicate call (never throws)
+    const syncReg = new FakeRegistry();
+    const syncWin = {
+      customElements: syncReg as unknown as CustomElementRegistry,
+      CustomElementRegistryPolyfill: {},
+    } as unknown as Window;
+
+    defineCustomElementSafely("solar-sky-radar-card", DummyCtor, syncWin);
+    expect(syncReg.get("solar-sky-radar-card")).toBe(DummyCtor);
+    expect(() =>
+      defineCustomElementSafely("solar-sky-radar-card", DummyCtor, syncWin)
+    ).not.toThrow();
+
+    // 2. Pre-polyfill extra_module_url race (`window.__haScopedRegistryReady` swaps window.customElements)
+    const nativeReg = new FakeRegistry();
+    const scopedReg = new FakeRegistry();
+    let resolveScopedReady!: () => void;
+    const scopedWin: Record<string, unknown> = {
+      customElements: nativeReg,
+      __haScopedRegistryReady: new Promise<void>((r) => {
+        resolveScopedReady = r;
+      }),
+    };
+
+    defineCustomElementSafely(
+      "solar-sky-radar-card",
+      DummyCtor,
+      scopedWin as unknown as Window
+    );
+    // Must NOT poison nativeReg before polyfill finishes installing stand-in class
+    expect(nativeReg.get("solar-sky-radar-card")).toBeUndefined();
+
+    // Polyfill replaces window.customElements and resolves __haScopedRegistryReady
+    scopedWin.customElements = scopedReg;
+    scopedWin.CustomElementRegistryPolyfill = { formAssociated: new Set() };
+    resolveScopedReady();
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(scopedReg.get("solar-sky-radar-card")).toBe(DummyCtor);
+  });
+
+  it("fetchPrivacySafeVectorStyle aborts stalled OpenFreeMap requests and recovers on retry", async () => {
+    clearVectorStyleCacheForTests();
+    const origFetch = globalThis.fetch;
+
+    try {
+      // Simulate iOS WKWebView cellular/Wi-Fi handoff stalling external style fetch until AbortSignal fires
+      globalThis.fetch = vi.fn(
+        (_input: RequestInfo | URL, init?: RequestInit) =>
+          new Promise<Response>((_resolve, reject) => {
+            init?.signal?.addEventListener("abort", () => {
+              reject(new DOMException("Aborted", "AbortError"));
+            });
+          })
+      ) as unknown as typeof fetch;
+
+      const fallbackRes = await fetchPrivacySafeVectorStyle(
+        "https://tiles.example.invalid/styles/dark",
+        true,
+        40
+      );
+      expect(fallbackRes.isFallback).toBe(true);
+      expect(fallbackRes.style.layers[0]?.id).toBe("ssr-fallback-bg");
+
+      // Subsequent retry once network recovers must NOT be stuck on a cached failure
+      globalThis.fetch = vi.fn(async () =>
+        new Response(
+          JSON.stringify({
+            version: 8,
+            sources: {},
+            layers: [
+              {
+                id: "background",
+                type: "background",
+                paint: { "background-color": "#000000" },
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } }
+        )
+      ) as unknown as typeof fetch;
+
+      const liveRes = await fetchPrivacySafeVectorStyle(
+        "https://tiles.example.invalid/styles/dark",
+        true,
+        500
+      );
+      expect(liveRes.isFallback).toBe(false);
+      expect(liveRes.style.layers[0]?.id).toBe("background");
+    } finally {
+      globalThis.fetch = origFetch;
+      clearVectorStyleCacheForTests();
+    }
   });
 });

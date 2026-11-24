@@ -1,6 +1,7 @@
 import { LitElement, css, html } from "lit";
 import { property } from "lit/decorators.js";
 import type { TimelineSlot } from "../types";
+import { defineCustomElementSafely } from "../utils/register-custom-element";
 
 const SPEEDS = [0.5, 1, 1.5, 2];
 
@@ -418,6 +419,4 @@ export class SolarSkyJogSlider extends LitElement {
   }
 }
 
-if (!customElements.get("solar-sky-jog-slider")) {
-  customElements.define("solar-sky-jog-slider", SolarSkyJogSlider);
-}
+defineCustomElementSafely("solar-sky-jog-slider", SolarSkyJogSlider);

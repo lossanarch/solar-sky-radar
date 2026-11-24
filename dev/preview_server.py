@@ -663,7 +663,7 @@ def create_app() -> web.Application:
     app.router.add_get(f"{API_BASE}/wind", handle_wind)
     app.router.add_get(f"{API_BASE}/hazards", handle_hazards)
     app.router.add_post("/api/dev/preset", handle_preset)
-    app.router.add_get(f"{STATIC_URL_BASE}/{CARD_FILENAME}", handle_card_js)
+    app.router.add_static(STATIC_URL_BASE, www_dir)
     app.router.add_get(f"/solar_sky_radar/{CARD_FILENAME}", handle_card_js)
     return app
 

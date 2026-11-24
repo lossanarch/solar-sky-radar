@@ -9,6 +9,7 @@ import {
   type SolarSkyRadarCardConfig,
   type WindAltitudeMode,
 } from "./types";
+import { defineCustomElementSafely } from "./utils/register-custom-element";
 
 export class SolarSkyRadarCardEditor extends LitElement {
   @property({ attribute: false }) hass?: HomeAssistantLike;
@@ -119,7 +120,11 @@ export class SolarSkyRadarCardEditor extends LitElement {
   `;
 
   setConfig(config: SolarSkyRadarCardConfig): void {
-    this.config = { ...config };
+    const incoming = (config ?? {}) as Partial<SolarSkyRadarCardConfig>;
+    this.config = {
+      ...incoming,
+      type: incoming.type ?? "custom:solar-sky-radar-card",
+    };
   }
 
   private emitConfig(next: SolarSkyRadarCardConfig): void {
@@ -405,6 +410,4 @@ export class SolarSkyRadarCardEditor extends LitElement {
   }
 }
 
-if (!customElements.get("solar-sky-radar-card-editor")) {
-  customElements.define("solar-sky-radar-card-editor", SolarSkyRadarCardEditor);
-}
+defineCustomElementSafely("solar-sky-radar-card-editor", SolarSkyRadarCardEditor);

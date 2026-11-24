@@ -1,6 +1,6 @@
 {
   "name": "solar-sky-radar",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "private": true,
   "type": "module",
   "description": "Home Assistant HACS integration and Lovelace weather radar card with Himawari-9/global true-colour & solar cloud overlays, wind streamlines, lightning, NASA FIRMS, and 2-hour jogging playback.",
@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "lit": "^3.2.1",
-    "maplibre-gl": "^5.1.0"
+    "maplibre-gl": "^6.19.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

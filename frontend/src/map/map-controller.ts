@@ -1,11 +1,13 @@
 import type * as GeoJSON from "geojson";
-import maplibregl, {
-  type GeoJSONSource,
-  type ImageSource,
-  type Map as MapLibreMap,
-  type MapGeoJSONFeature,
-  type MapMouseEvent,
-  type StyleSpecification,
+import type {
+  GeoJSONSource,
+  ImageSource,
+  Map as MapLibreMap,
+  MapGeoJSONFeature,
+  MapMouseEvent,
+  Marker as MapLibreMarker,
+  Popup as MapLibrePopup,
+  StyleSpecification,
 } from "maplibre-gl";
 import type {
   BasemapTheme,
@@ -18,8 +20,41 @@ import type {
 import type { ResolvedFrameUrls } from "./frame-player";
 import { WindStreamlineRenderer } from "./wind-particles";
 
+type MapLibreModule = typeof import("maplibre-gl");
+
+let maplibreModulePromise: Promise<MapLibreModule> | null = null;
+
+async function loadMapLibre(): Promise<MapLibreModule> {
+  if (!maplibreModulePromise) {
+    maplibreModulePromise = (async () => {
+      let lastErr: unknown;
+      for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+          return await import("maplibre-gl");
+        } catch (err) {
+          lastErr = err;
+          if (attempt < 2) {
+            await new Promise((resolve) =>
+              globalThis.setTimeout(resolve, 300 * (attempt + 1))
+            );
+          }
+        }
+      }
+      maplibreModulePromise = null;
+      throw lastErr;
+    })();
+  }
+  return maplibreModulePromise;
+}
+
+/** Kick off asynchronous download of the MapLibre chunk after card registration. */
+export function preloadMapLibre(): void {
+  void loadMapLibre().catch(() => {});
+}
+
 const OPENFREEMAP_DARK_STYLE = "https://tiles.openfreemap.org/styles/dark";
 const OPENFREEMAP_LIGHT_STYLE = "https://tiles.openfreemap.org/styles/positron";
+export const DEFAULT_STYLE_FETCH_TIMEOUT_MS = 3500;
 
 // Cache sanitized base vector styles so switching themes or remounting cards requires zero extra fetches
 const SAFE_VECTOR_STYLE_CACHE = new Map<string, Promise<StyleSpecification>>();
@@ -392,27 +427,53 @@ export function sanitizeVectorStyleForPrivacy(
   return style;
 }
 
-async function fetchPrivacySafeVectorStyle(
+export interface ResolvedVectorStyle {
+  style: StyleSpecification;
+  isFallback: boolean;
+}
+
+export async function fetchPrivacySafeVectorStyle(
   url: string,
-  dark: boolean
-): Promise<StyleSpecification> {
+  dark: boolean,
+  timeoutMs = DEFAULT_STYLE_FETCH_TIMEOUT_MS
+): Promise<ResolvedVectorStyle> {
   const cacheKey = `${url}::${dark ? "dark" : "light"}`;
   let pending = SAFE_VECTOR_STYLE_CACHE.get(cacheKey);
   if (!pending) {
     pending = (async () => {
+      const controller =
+        typeof AbortController !== "undefined" ? new AbortController() : null;
+      const timer =
+        controller && timeoutMs > 0
+          ? globalThis.setTimeout(() => controller.abort(), timeoutMs)
+          : null;
       try {
-        const resp = await fetch(url, { mode: "cors" });
+        const resp = await fetch(url, {
+          mode: "cors",
+          ...(controller ? { signal: controller.signal } : {}),
+        });
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const json = (await resp.json()) as StyleSpecification;
         return sanitizeVectorStyleForPrivacy(json, dark);
-      } catch {
-        SAFE_VECTOR_STYLE_CACHE.delete(cacheKey);
-        return buildFallbackStyle(dark);
+      } finally {
+        if (timer !== null) {
+          globalThis.clearTimeout(timer);
+        }
       }
     })();
     SAFE_VECTOR_STYLE_CACHE.set(cacheKey, pending);
   }
-  return structuredClone(await pending);
+  try {
+    const resolved = await pending;
+    return { style: structuredClone(resolved), isFallback: false };
+  } catch {
+    SAFE_VECTOR_STYLE_CACHE.delete(cacheKey);
+    return { style: buildFallbackStyle(dark), isFallback: true };
+  }
+}
+
+export function clearVectorStyleCacheForTests(): void {
+  SAFE_VECTOR_STYLE_CACHE.clear();
 }
 
 function buildBomRasterStyle(
@@ -501,40 +562,196 @@ export function resolveIsDark(
  * pinned ABOVE the True Colour satellite, Visual Cloud, and Rain Radar rasters.
  */
 export class MapController {
+  private ml: MapLibreModule | null = null;
   private map: MapLibreMap | null = null;
   private windRenderer: WindStreamlineRenderer | null = null;
   private resizeObserver: ResizeObserver | null = null;
-  private homeMarker: maplibregl.Marker | null = null;
-  private hoverPopup: maplibregl.Popup | null = null;
-  private pinnedPopup: maplibregl.Popup | null = null;
+  private homeMarker: MapLibreMarker | null = null;
+  private hoverPopup: MapLibrePopup | null = null;
+  private pinnedPopup: MapLibrePopup | null = null;
   private hoveredFireId = "";
   private pinnedFireId = "";
   private locked = true;
 
   private styleReady = false;
   private currentStyleKey = "";
+  private usingFallbackBasemap = false;
   private styleSeq = 0;
   private mountPromise: Promise<void> | null = null;
+  private upgradeTimer: number | null = null;
+  private postMountTimers: number[] = [];
 
   private appliedUrls = { tc: "", vc: "", rad: "" };
   private appliedCoordsKey = "";
 
   private manifest: ManifestPayload | null = null;
+  private wind: WindPayload | null = null;
   private hazards: HazardsPayload | null = null;
   private latestFrame: ResolvedFrameUrls | null = null;
   private config!: SolarSkyRadarCardConfig;
   private destroyed = false;
+  private remounting = false;
 
   constructor(
     private container: HTMLElement,
     private getHass: () => HomeAssistantLike | undefined,
-    private onMapInteract?: () => void
+    private onMapInteract?: () => void,
+    private onStatusError?: (message: string | null) => void
   ) {}
 
   init(config: SolarSkyRadarCardConfig): void {
     this.config = config;
     this.locked = config.lock_map ?? true;
+    this.attachLifecycleListeners();
     this.mountPromise = this.mountInitialMap();
+  }
+
+  handleReconnect(): void {
+    if (this.destroyed) return;
+    if (!this.map && !this.mountPromise) {
+      this.mountPromise = this.mountInitialMap();
+      return;
+    }
+    this.safeResize();
+    this.schedulePostMountResizes();
+  }
+
+  private attachLifecycleListeners(): void {
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", this.handleVisibilityOrWake);
+    }
+    if (typeof window !== "undefined") {
+      window.addEventListener("pageshow", this.handleVisibilityOrWake);
+      window.addEventListener("online", this.handleOnline);
+    }
+  }
+
+  private detachLifecycleListeners(): void {
+    if (typeof document !== "undefined") {
+      document.removeEventListener("visibilitychange", this.handleVisibilityOrWake);
+    }
+    if (typeof window !== "undefined") {
+      window.removeEventListener("pageshow", this.handleVisibilityOrWake);
+      window.removeEventListener("online", this.handleOnline);
+    }
+  }
+
+  private handleOnline = (): void => {
+    if (this.destroyed) return;
+    if (!this.map && !this.remounting) {
+      void this.remountMap();
+      return;
+    }
+    if (this.usingFallbackBasemap) {
+      void this.tryUpgradeFallbackBasemap();
+    }
+  };
+
+  private handleVisibilityOrWake = (): void => {
+    if (this.destroyed) return;
+    if (typeof document !== "undefined" && document.visibilityState === "hidden") {
+      return;
+    }
+    if (!this.map && !this.remounting) {
+      void this.remountMap();
+      return;
+    }
+    this.safeResize();
+    this.ensureOverlayLayers();
+    this.syncAllState();
+    if (this.usingFallbackBasemap) {
+      void this.tryUpgradeFallbackBasemap();
+    }
+
+    // On iOS WKWebView wake, if the GPU process evicted our WebGL context without
+    // firing webglcontextrestored, rebuild the Map cleanly after a brief grace window.
+    const checkTimer = globalThis.setTimeout(() => {
+      if (this.destroyed || this.remounting || !this.map) return;
+      if (this.isWebGLContextLost()) {
+        void this.remountMap();
+      } else {
+        this.safeResize();
+        this.map.triggerRepaint();
+      }
+    }, 350);
+    this.postMountTimers.push(checkTimer as unknown as number);
+  };
+
+  private isWebGLContextLost(): boolean {
+    if (!this.map) return false;
+    try {
+      const canvas = this.map.getCanvas();
+      const gl =
+        canvas.getContext("webgl2") ||
+        canvas.getContext("webgl") ||
+        canvas.getContext("experimental-webgl");
+      if (gl && "isContextLost" in gl && typeof gl.isContextLost === "function") {
+        return Boolean(gl.isContextLost());
+      }
+    } catch {
+      // Ignore context probe errors
+    }
+    return false;
+  }
+
+  private safeResize(): void {
+    if (this.destroyed || !this.map) return;
+    if (this.container.clientWidth <= 0 || this.container.clientHeight <= 0) {
+      return;
+    }
+    try {
+      this.map.resize();
+      this.windRenderer?.resize();
+    } catch {
+      // Guard against resize during transient WebGL context loss
+    }
+  }
+
+  private clearPostMountTimers(): void {
+    for (const id of this.postMountTimers) {
+      globalThis.clearTimeout(id);
+    }
+    this.postMountTimers = [];
+    if (this.upgradeTimer !== null) {
+      globalThis.clearTimeout(this.upgradeTimer);
+      this.upgradeTimer = null;
+    }
+  }
+
+  private schedulePostMountResizes(): void {
+    if (typeof requestAnimationFrame === "function") {
+      requestAnimationFrame(() => this.safeResize());
+    }
+    for (const delay of [120, 450]) {
+      const id = globalThis.setTimeout(() => this.safeResize(), delay);
+      this.postMountTimers.push(id as unknown as number);
+    }
+  }
+
+  private async waitForNonZeroContainer(maxWaitMs = 600): Promise<void> {
+    if (this.container.clientWidth > 0 && this.container.clientHeight > 0) {
+      return;
+    }
+    if (typeof ResizeObserver === "undefined") {
+      return;
+    }
+    await new Promise<void>((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        obs.disconnect();
+        globalThis.clearTimeout(timer);
+        resolve();
+      };
+      const obs = new ResizeObserver(() => {
+        if (this.container.clientWidth > 0 && this.container.clientHeight > 0) {
+          finish();
+        }
+      });
+      obs.observe(this.container);
+      const timer = globalThis.setTimeout(finish, maxWaitMs);
+    });
   }
 
   get isLocked(): boolean {
@@ -635,6 +852,7 @@ export class MapController {
     styleKey: string;
     isDark: boolean;
     styleSpec: StyleSpecification;
+    isFallback: boolean;
   }> {
     const { styleKey, isDark } = this.computeStyleKey(theme);
     const bm = this.manifest?.providers.basemap;
@@ -651,89 +869,200 @@ export class MapController {
           bm.bom_towns_overlay,
           bm.bom_borders_overlay
         ),
+        isFallback: false,
       };
     }
 
     const url = isDark ? OPENFREEMAP_DARK_STYLE : OPENFREEMAP_LIGHT_STYLE;
-    const styleSpec = await fetchPrivacySafeVectorStyle(url, isDark);
-    return { styleKey, isDark, styleSpec };
+    const { style, isFallback } = await fetchPrivacySafeVectorStyle(url, isDark);
+    return { styleKey, isDark, styleSpec: style, isFallback };
+  }
+
+  private scheduleFallbackBasemapUpgrade(delayMs = 4500): void {
+    if (this.destroyed || this.upgradeTimer !== null) return;
+    this.upgradeTimer = globalThis.setTimeout(() => {
+      this.upgradeTimer = null;
+      void this.tryUpgradeFallbackBasemap();
+    }, delayMs) as unknown as number;
+  }
+
+  private async tryUpgradeFallbackBasemap(): Promise<void> {
+    if (this.destroyed || !this.map || !this.usingFallbackBasemap) return;
+    const theme = this.config.basemap_theme ?? "auto";
+    const seq = ++this.styleSeq;
+    const resolved = await this.resolveStyleSpec(theme);
+    if (this.destroyed || !this.map || seq !== this.styleSeq) return;
+    if (resolved.isFallback) {
+      // Still offline or OpenFreeMap still blocked; keep satellite/radar map running
+      return;
+    }
+    this.usingFallbackBasemap = false;
+    this.currentStyleKey = resolved.styleKey;
+    this.styleReady = false;
+    this.appliedUrls = { tc: "", vc: "", rad: "" };
+    this.map.setStyle(resolved.styleSpec, { diff: false });
+  }
+
+  private teardownMapOnly(): void {
+    this.clearPostMountTimers();
+    this.resizeObserver?.disconnect();
+    this.resizeObserver = null;
+    this.windRenderer?.destroy();
+    this.windRenderer = null;
+    this.hoverPopup?.remove();
+    this.hoverPopup = null;
+    this.pinnedPopup?.remove();
+    this.pinnedPopup = null;
+    this.homeMarker?.remove();
+    this.homeMarker = null;
+    try {
+      this.map?.remove();
+    } catch {
+      // Ignore cleanup errors on lost WebGL context
+    }
+    this.map = null;
+    this.container.replaceChildren();
+    this.container.classList.remove("maplibregl-map");
+    this.styleReady = false;
+    this.appliedUrls = { tc: "", vc: "", rad: "" };
+    this.appliedCoordsKey = "";
+  }
+
+  private async remountMap(): Promise<void> {
+    if (this.destroyed || this.remounting) return;
+    this.remounting = true;
+    try {
+      this.teardownMapOnly();
+      this.mountPromise = this.mountInitialMap();
+      await this.mountPromise;
+    } finally {
+      this.remounting = false;
+    }
   }
 
   private async mountInitialMap(): Promise<void> {
     const seq = ++this.styleSeq;
-    const { styleKey, isDark, styleSpec } = await this.resolveStyleSpec(
-      this.config.basemap_theme ?? "auto"
-    );
-    if (this.destroyed) return;
+    try {
+      const [ml, resolved] = await Promise.all([
+        loadMapLibre(),
+        this.resolveStyleSpec(this.config.basemap_theme ?? "auto"),
+        this.waitForNonZeroContainer(600),
+      ]);
+      if (this.destroyed) return;
 
-    this.currentStyleKey = styleKey;
-    const [centerLat, centerLon] = this.getHomeLatLon();
-    const zoom = this.config.zoom_level ?? 7.2;
+      this.ml = ml;
+      const { styleKey, isDark, styleSpec, isFallback } = resolved;
+      this.currentStyleKey = styleKey;
+      this.usingFallbackBasemap = isFallback;
+      const [centerLat, centerLon] = this.getHomeLatLon();
+      const zoom = this.config.zoom_level ?? 7.2;
 
-    // Construct MapLibre directly with the resolved sanitized style (no startup setStyle race!)
-    // and `attributionControl: false` (card renders a tiny collapsed-by-default `i` badge instead)
-    this.map = new maplibregl.Map({
-      container: this.container,
-      style: styleSpec,
-      center: [centerLon, centerLat],
-      zoom,
-      minZoom: 3,
-      maxZoom: 12,
-      localIdeographFontFamily: false,
-      attributionControl: false,
-      pitchWithRotate: false,
-      dragRotate: false,
-      transformRequest: (url) => {
-        const auth = this.getHass()?.auth as
-          | { data?: { access_token?: string }; accessToken?: string }
-          | undefined;
-        const token = auth?.data?.access_token ?? auth?.accessToken;
-        if (token && url.startsWith("/") && url.includes("/api/")) {
-          return {
-            url: `${window.location.origin}${url}`,
-            headers: { Authorization: `Bearer ${token}` },
-          };
-        }
-        return { url };
-      },
-    });
+      // Ensure container has no leftover nodes before MapLibre mounts
+      this.container.replaceChildren();
+      this.container.classList.remove("maplibregl-map");
 
-    this.windRenderer = new WindStreamlineRenderer(this.container);
-    this.windRenderer.attachMap(this.map);
-    this.windRenderer.setOptions(
-      this.config.show_wind ?? true,
-      this.config.wind_level ?? "850hPa",
-      this.config.wind_opacity ?? 0.85,
-      isDark
-    );
+      // Construct MapLibre directly with the resolved sanitized style (no startup setStyle race!)
+      // and `attributionControl: false` (card renders a tiny collapsed-by-default `i` badge instead)
+      this.map = new ml.Map({
+        container: this.container,
+        style: styleSpec,
+        center: [centerLon, centerLat],
+        zoom,
+        minZoom: 3,
+        maxZoom: 12,
+        localIdeographFontFamily: false,
+        attributionControl: false,
+        pitchWithRotate: false,
+        dragRotate: false,
+        transformRequest: (url) => {
+          const auth = this.getHass()?.auth as
+            | { data?: { access_token?: string }; accessToken?: string }
+            | undefined;
+          const token = auth?.data?.access_token ?? auth?.accessToken;
+          if (token && url.startsWith("/") && url.includes("/api/")) {
+            return {
+              url: `${window.location.origin}${url}`,
+              headers: { Authorization: `Bearer ${token}` },
+            };
+          }
+          return { url };
+        },
+      });
 
-    const ensureOverlays = () => this.ensureOverlayLayers();
-    this.map.on("style.load", ensureOverlays);
-    this.map.on("load", ensureOverlays);
-    this.map.on("idle", ensureOverlays);
+      this.onStatusError?.(null);
 
-    this.attachHazardHoverAndClickHandlers();
-    this.applyLockState();
+      // Guard WebGL context loss / restore on iOS WKWebView
+      const canvas = this.map.getCanvas();
+      canvas.addEventListener("webglcontextlost", (ev) => {
+        ev.preventDefault();
+        this.styleReady = false;
+      });
+      canvas.addEventListener("webglcontextrestored", () => {
+        if (this.destroyed || !this.map) return;
+        this.styleReady = false;
+        this.appliedUrls = { tc: "", vc: "", rad: "" };
+        this.appliedCoordsKey = "";
+        this.ensureOverlayLayers();
+        this.safeResize();
+        this.map.triggerRepaint();
+      });
 
-    if (this.onMapInteract) {
-      this.map.on("dragstart", this.onMapInteract);
-      this.map.on("click", this.onMapInteract);
-    }
+      this.windRenderer = new WindStreamlineRenderer(this.container);
+      this.windRenderer.attachMap(this.map);
+      if (this.wind) {
+        this.windRenderer.setWindData(this.wind);
+      }
+      this.windRenderer.setOptions(
+        this.config.show_wind ?? true,
+        this.config.wind_level ?? "850hPa",
+        this.config.wind_opacity ?? 0.85,
+        isDark
+      );
 
-    this.updateHomeMarker(centerLat, centerLon);
+      const ensureOverlays = () => this.ensureOverlayLayers();
+      this.map.on("style.load", ensureOverlays);
+      this.map.on("load", ensureOverlays);
+      this.map.on("idle", ensureOverlays);
+      if (this.map.isStyleLoaded()) {
+        ensureOverlays();
+      }
 
-    this.resizeObserver = new ResizeObserver(() => {
-      this.map?.resize();
-      this.windRenderer?.resize();
-    });
-    this.resizeObserver.observe(this.container);
+      this.attachHazardHoverAndClickHandlers();
+      this.applyLockState();
 
-    // If theme changed while initial style JSON was fetching, apply latest style cleanly
-    const latestKey = this.computeStyleKey(
-      this.config.basemap_theme ?? "auto"
-    ).styleKey;
-    if (seq === this.styleSeq && latestKey !== this.currentStyleKey) {
-      void this.applyStyleChange(this.config.basemap_theme ?? "auto");
+      if (this.onMapInteract) {
+        this.map.on("dragstart", this.onMapInteract);
+        this.map.on("click", this.onMapInteract);
+      }
+
+      this.updateHomeMarker(centerLat, centerLon);
+
+      if (typeof ResizeObserver !== "undefined") {
+        this.resizeObserver = new ResizeObserver(() => {
+          this.safeResize();
+        });
+        this.resizeObserver.observe(this.container);
+      }
+      this.schedulePostMountResizes();
+
+      if (isFallback) {
+        this.scheduleFallbackBasemapUpgrade(4500);
+      }
+
+      // If theme changed while initial style JSON was fetching, apply latest style cleanly
+      const latestKey = this.computeStyleKey(
+        this.config.basemap_theme ?? "auto"
+      ).styleKey;
+      if (seq === this.styleSeq && latestKey !== this.currentStyleKey) {
+        void this.applyStyleChange(this.config.basemap_theme ?? "auto");
+      }
+    } catch (err) {
+      this.mountPromise = null;
+      if (!this.destroyed) {
+        const detail =
+          err instanceof Error ? err.message : "WebGL map engine unavailable";
+        this.onStatusError?.(`Map engine failed to initialize (${detail})`);
+      }
     }
   }
 
@@ -958,7 +1287,8 @@ export class MapController {
       const node = this.buildFirePopupNode(props, coords, false);
 
       this.hoverPopup?.remove();
-      this.hoverPopup = new maplibregl.Popup({
+      if (!this.ml) return;
+      this.hoverPopup = new this.ml.Popup({
         closeButton: false,
         closeOnClick: false,
         offset: 12,
@@ -998,8 +1328,9 @@ export class MapController {
       this.pinnedPopup?.remove();
 
       this.pinnedFireId = fid;
+      if (!this.ml) return;
       const node = this.buildFirePopupNode(props, coords, true);
-      this.pinnedPopup = new maplibregl.Popup({
+      this.pinnedPopup = new this.ml.Popup({
         closeButton: true,
         closeOnClick: false,
         offset: 12,
@@ -1031,10 +1362,14 @@ export class MapController {
     if (this.destroyed || !this.map || seq !== this.styleSeq) return;
 
     this.currentStyleKey = resolved.styleKey;
+    this.usingFallbackBasemap = resolved.isFallback;
     this.styleReady = false;
     this.appliedUrls = { tc: "", vc: "", rad: "" };
     // `diff: false` forces clean synchronous `Style.loadJSON` -> fires `style.load` deterministically
     this.map.setStyle(resolved.styleSpec, { diff: false });
+    if (resolved.isFallback) {
+      this.scheduleFallbackBasemapUpgrade(4500);
+    }
   }
 
   private ensureOverlayLayers(): void {
@@ -1404,7 +1739,7 @@ export class MapController {
   }
 
   private updateHomeMarker(lat: number, lon: number): void {
-    if (!this.map) return;
+    if (!this.map || !this.ml) return;
     if (!this.homeMarker) {
       const el = document.createElement("div");
       el.style.width = "14px";
@@ -1415,7 +1750,7 @@ export class MapController {
       el.style.boxShadow =
         "0 0 0 4px rgba(14, 165, 233, 0.30), 0 2px 6px rgba(15, 23, 42, 0.55)";
       el.title = "Home / Solar PV Array";
-      this.homeMarker = new maplibregl.Marker({ element: el })
+      this.homeMarker = new this.ml.Marker({ element: el })
         .setLngLat([lon, lat])
         .addTo(this.map);
     } else {
@@ -1479,6 +1814,7 @@ export class MapController {
   }
 
   setWind(wind: WindPayload | null): void {
+    this.wind = wind;
     const isDark = resolveIsDark(this.config.basemap_theme, this.getHass());
     this.windRenderer?.setWindData(wind);
     this.windRenderer?.setOptions(
@@ -1619,6 +1955,7 @@ export class MapController {
   private syncAllState(): void {
     this.syncLayerVisibilityAndOpacity();
     if (this.manifest) this.setManifest(this.manifest);
+    if (this.wind) this.setWind(this.wind);
     if (this.hazards) this.setHazards(this.hazards);
     if (this.latestFrame) this.applyFrame(this.latestFrame);
   }
@@ -1649,12 +1986,7 @@ export class MapController {
 
   destroy(): void {
     this.destroyed = true;
-    this.resizeObserver?.disconnect();
-    this.windRenderer?.destroy();
-    this.hoverPopup?.remove();
-    this.pinnedPopup?.remove();
-    this.homeMarker?.remove();
-    this.map?.remove();
-    this.map = null;
+    this.detachLifecycleListeners();
+    this.teardownMapOnly();
   }
 }

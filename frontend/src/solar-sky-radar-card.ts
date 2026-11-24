@@ -5,7 +5,7 @@ import maplibreCss from "maplibre-gl/dist/maplibre-gl.css?inline";
 import "./components/jog-slider";
 import "./editor";
 import { FramePlayer, type ResolvedFrameUrls } from "./map/frame-player";
-import { MapController, resolveIsDark } from "./map/map-controller";
+import { MapController, preloadMapLibre, resolveIsDark } from "./map/map-controller";
 import {
   resolveAutoplayMode,
   type CloudRenderMode,
@@ -17,6 +17,7 @@ import {
   type WindAltitudeMode,
   type WindPayload,
 } from "./types";
+import { defineCustomElementSafely } from "./utils/register-custom-element";
 
 const DEFAULT_CONFIG: SolarSkyRadarCardConfig = {
   type: "custom:solar-sky-radar-card",
@@ -44,8 +45,38 @@ const DEFAULT_CONFIG: SolarSkyRadarCardConfig = {
   playback_speed: 1,
 };
 
+function clampFinite(val: unknown, fallback: number, min: number, max: number): number {
+  const num = typeof val === "number" ? val : Number(val);
+  if (!Number.isFinite(num)) return fallback;
+  return Math.max(min, Math.min(max, num));
+}
+
+function sanitizeCardConfig(raw: SolarSkyRadarCardConfig): SolarSkyRadarCardConfig {
+  const merged: SolarSkyRadarCardConfig = { ...DEFAULT_CONFIG, ...raw };
+  merged.zoom_level = clampFinite(merged.zoom_level, 7.2, 3, 12);
+  merged.map_height = clampFinite(merged.map_height, 490, 240, 1400);
+  merged.true_colour_opacity = clampFinite(merged.true_colour_opacity, 1.0, 0.05, 1.0);
+  merged.cloud_opacity = clampFinite(merged.cloud_opacity, 0.58, 0.05, 1.0);
+  merged.radar_opacity = clampFinite(merged.radar_opacity, 0.85, 0.05, 1.0);
+  merged.wind_opacity = clampFinite(merged.wind_opacity, 0.85, 0.05, 1.0);
+  merged.playback_speed = clampFinite(merged.playback_speed, 1, 0.25, 4);
+  if (merged.center_latitude !== undefined) {
+    const lat = Number(merged.center_latitude);
+    merged.center_latitude = Number.isFinite(lat) ? Math.max(-85, Math.min(85, lat)) : undefined;
+  }
+  if (merged.center_longitude !== undefined) {
+    const lon = Number(merged.center_longitude);
+    merged.center_longitude = Number.isFinite(lon) ? Math.max(-180, Math.min(180, lon)) : undefined;
+  }
+  return merged;
+}
+
 export class SolarSkyRadarCard extends LitElement {
   @property({ attribute: false }) hass?: HomeAssistantLike;
+  @property({ attribute: false }) layout?: string;
+  @property({ type: Boolean }) preview = false;
+  @property({ type: Boolean }) editMode = false;
+  @property({ type: Boolean }) isPanel = false;
 
   @state() private config: SolarSkyRadarCardConfig = { ...DEFAULT_CONFIG };
   @state() private manifest: ManifestPayload | null = null;
@@ -58,6 +89,7 @@ export class SolarSkyRadarCard extends LitElement {
   @state() private speed = 1;
   @state() private loading = true;
   @state() private errorMessage: string | null = null;
+  @state() private mapEngineError: string | null = null;
   @state() private hudExpanded = false;
   @state() private layersOpen = false;
   @state() private attribOpen = false;
@@ -66,6 +98,7 @@ export class SolarSkyRadarCard extends LitElement {
   private mapController: MapController | null = null;
   private framePlayer: FramePlayer | null = null;
   private pollTimer: number | null = null;
+  private disconnectTimer: number | null = null;
   private visibilityObserver: IntersectionObserver | null = null;
 
   private isUncovered75 = false;
@@ -830,8 +863,23 @@ export class SolarSkyRadarCard extends LitElement {
 
   connectedCallback(): void {
     super.connectedCallback();
+    preloadMapLibre();
     this.hasPlayedSingleOnReveal = false;
     this.userPausedWhileVisible = false;
+
+    // Cancel pending teardown if Lovelace reparented this card across masonry columns / sections
+    if (this.disconnectTimer !== null) {
+      globalThis.clearTimeout(this.disconnectTimer);
+      this.disconnectTimer = null;
+    }
+
+    if (this.mapController) {
+      this.mapController.handleReconnect();
+      this.ensurePollTimer();
+      this.ensureVisibilityObserver();
+    } else if (this.hasUpdated) {
+      this.ensureRuntimeMounted();
+    }
   }
 
   protected updated(changedProps: PropertyValues<this>): void {
@@ -845,12 +893,12 @@ export class SolarSkyRadarCard extends LitElement {
   }
 
   setConfig(config: SolarSkyRadarCardConfig): void {
-    if (!config) {
+    if (!config || typeof config !== "object") {
       throw new Error("Invalid configuration");
     }
     const prevLockCfg = this.config.lock_map;
     const prevMode = resolveAutoplayMode(this.config);
-    this.config = { ...DEFAULT_CONFIG, ...config };
+    this.config = sanitizeCardConfig(config);
     const nextLockCfg = this.config.lock_map ?? true;
     if (prevLockCfg !== config.lock_map || !this.mapController) {
       this.mapLocked = nextLockCfg;
@@ -884,50 +932,27 @@ export class SolarSkyRadarCard extends LitElement {
     return Math.ceil(((this.config.map_height ?? 490) + 74) / 50);
   }
 
+  getGridOptions(): { columns: number; min_columns: number } {
+    return { columns: 12, min_columns: 6 };
+  }
+
   protected firstUpdated(): void {
-    const mapEl = this.renderRoot.querySelector(".map-canvas") as HTMLElement | null;
-    if (!mapEl) return;
+    if (this.isConnected) {
+      this.ensureRuntimeMounted();
+    }
+  }
 
-    this.lastDarkResolved = resolveIsDark(this.config.basemap_theme, this.hass);
-    this.mapController = new MapController(
-      mapEl,
-      () => this.hass,
-      () => {
-        if (this.layersOpen) this.layersOpen = false;
-        if (this.attribOpen) this.attribOpen = false;
-      }
-    );
-    this.mapController.init(this.config);
-    this.mapController.setLocked(this.mapLocked, false);
-
-    this.framePlayer = new FramePlayer(
-      () => this.hass,
-      (frame: ResolvedFrameUrls) => {
-        this.currentIndex = frame.index;
-        this.mapController?.applyFrame(frame);
-      },
-      (ready: boolean[]) => {
-        this.readySlots = ready;
-      },
-      (isPlaying: boolean) => {
-        this.playing = isPlaying;
-      }
-    );
-    this.framePlayer.setEntryId(this.config.entry_id);
-    this.framePlayer.setLayerFlags({
-      trueColour: this.config.show_true_colour ?? true,
-      cloudOverlay: this.config.show_cloud_overlay ?? false,
-      cloudMode: this.config.cloud_mode ?? "solar_cloud",
-      radar: this.config.show_radar ?? true,
-    });
-    this.framePlayer.setSpeed(this.speed);
-
-    void this.refreshAllData(true);
-
-    this.pollTimer = window.setInterval(() => {
+  private ensurePollTimer(): void {
+    if (this.pollTimer !== null) return;
+    this.pollTimer = globalThis.setInterval(() => {
       void this.refreshAllData(false);
-    }, 180_000);
+    }, 180_000) as unknown as number;
+  }
 
+  private ensureVisibilityObserver(): void {
+    if (this.visibilityObserver || typeof IntersectionObserver === "undefined") {
+      return;
+    }
     // Observe card visibility so autoplay triggers when scrolling uncovers >=75% of the map
     this.visibilityObserver = new IntersectionObserver(
       (entries) => {
@@ -963,6 +988,78 @@ export class SolarSkyRadarCard extends LitElement {
     this.visibilityObserver.observe(this);
   }
 
+  private ensureRuntimeMounted(): void {
+    if (!this.isConnected || this.mapController) return;
+    const mapEl = this.renderRoot.querySelector(".map-canvas") as HTMLElement | null;
+    if (!mapEl) return;
+
+    this.mapEngineError = null;
+    this.lastDarkResolved = resolveIsDark(this.config.basemap_theme, this.hass);
+    this.mapController = new MapController(
+      mapEl,
+      () => this.hass,
+      () => {
+        if (this.layersOpen) this.layersOpen = false;
+        if (this.attribOpen) this.attribOpen = false;
+      },
+      (msg) => {
+        this.mapEngineError = msg;
+      }
+    );
+    this.mapController.init(this.config);
+    this.mapController.setLocked(this.mapLocked, false);
+
+    if (this.manifest) {
+      this.mapController.setManifest(this.manifest);
+    }
+    if (this.wind) {
+      this.mapController.setWind(this.wind);
+    }
+    if (this.hazards) {
+      this.mapController.setHazards(this.hazards);
+    }
+
+    this.framePlayer = new FramePlayer(
+      () => this.hass,
+      (frame: ResolvedFrameUrls) => {
+        this.currentIndex = frame.index;
+        this.mapController?.applyFrame(frame);
+      },
+      (ready: boolean[]) => {
+        this.readySlots = ready;
+      },
+      (isPlaying: boolean) => {
+        this.playing = isPlaying;
+      }
+    );
+    this.framePlayer.setEntryId(this.config.entry_id);
+    this.framePlayer.setLayerFlags({
+      trueColour: this.config.show_true_colour ?? true,
+      cloudOverlay: this.config.show_cloud_overlay ?? false,
+      cloudMode: this.config.cloud_mode ?? "solar_cloud",
+      radar: this.config.show_radar ?? true,
+    });
+    this.framePlayer.setSpeed(this.speed);
+
+    void this.refreshAllData(this.manifest === null);
+    this.ensurePollTimer();
+    this.ensureVisibilityObserver();
+  }
+
+  private teardownRuntime(): void {
+    if (this.pollTimer !== null) {
+      globalThis.clearInterval(this.pollTimer);
+      this.pollTimer = null;
+    }
+    this.visibilityObserver?.disconnect();
+    this.visibilityObserver = null;
+    this.framePlayer?.destroy();
+    this.framePlayer = null;
+    this.mapController?.destroy();
+    this.mapController = null;
+    this.playing = false;
+  }
+
   private maybeTriggerVisibilityPlayback(): void {
     if (!this.isUncovered75 || this.loading || this.timeline.length <= 1) {
       return;
@@ -983,12 +1080,23 @@ export class SolarSkyRadarCard extends LitElement {
   disconnectedCallback(): void {
     super.disconnectedCallback();
     if (this.pollTimer !== null) {
-      window.clearInterval(this.pollTimer);
+      globalThis.clearInterval(this.pollTimer);
       this.pollTimer = null;
     }
     this.visibilityObserver?.disconnect();
-    this.framePlayer?.destroy();
-    this.mapController?.destroy();
+    this.visibilityObserver = null;
+
+    // Defer full WebGL & Blob URL teardown briefly so Lovelace column/section reparenting
+    // (e.g. hui-masonry-view rebuilding columns on iOS WebKit viewport settle) preserves the live map.
+    if (this.disconnectTimer !== null) {
+      globalThis.clearTimeout(this.disconnectTimer);
+    }
+    this.disconnectTimer = globalThis.setTimeout(() => {
+      this.disconnectTimer = null;
+      if (!this.isConnected) {
+        this.teardownRuntime();
+      }
+    }, 120) as unknown as number;
   }
 
   private apiBase(): string {
@@ -1533,9 +1641,9 @@ export class SolarSkyRadarCard extends LitElement {
                 Loading 2-hour Himawari / Radar frames...
               </div>`
             : nothing}
-          ${this.errorMessage
+          ${this.errorMessage || this.mapEngineError
             ? html`<div class="status-banner status-error">
-                ${this.errorMessage}
+                ${this.errorMessage ?? this.mapEngineError}
               </div>`
             : nothing}
         </div>
@@ -1575,6 +1683,4 @@ export class SolarSkyRadarCard extends LitElement {
   }
 }
 
-if (!customElements.get("solar-sky-radar-card")) {
-  customElements.define("solar-sky-radar-card", SolarSkyRadarCard);
-}
+defineCustomElementSafely("solar-sky-radar-card", SolarSkyRadarCard);

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "solar-sky-radar"
-version = "0.1.5"
+version = "0.1.6"
 description = "Home Assistant HACS Solar Sky & Weather Radar integration and Lovelace card"
 readme = "README.md"
 requires-python = ">=3.12"

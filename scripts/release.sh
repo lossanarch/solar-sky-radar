@@ -292,7 +292,7 @@ PY
 # 4. Commit version bump (if changed), tag, push, and create GitHub Release
 git add custom_components/solar_sky_radar/manifest.json \
         custom_components/solar_sky_radar/const.py \
-        custom_components/solar_sky_radar/www/solar-sky-radar-card.js \
+        custom_components/solar_sky_radar/www \
         package.json \
         pyproject.toml
 if [[ "$ALLOW_DIRTY" -eq 1 ]]; then
