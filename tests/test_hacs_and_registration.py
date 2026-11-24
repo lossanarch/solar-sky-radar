@@ -42,6 +42,15 @@ def test_hacs_and_manifest_metadata() -> None:
     assert lazy_chunks[0].stat().st_size > 500_000
     assert Path(f"{lazy_chunks[0]}.gz").is_file()
 
+    # MapLibre GL v6 requires a bundled dedicated Web Worker `.js` (never missing `maplibre-gl-worker.mjs`)
+    # so vector road/label/coastline tiles and GeoJSON overlays decode on WebKit & desktop browsers.
+    worker_chunks = list(www_dir.glob("solar-sky-radar-worker-*.js"))
+    assert len(worker_chunks) == 1
+    assert worker_chunks[0].stat().st_size > 200_000
+    assert Path(f"{worker_chunks[0]}.gz").is_file()
+    maplibre_chunk_src = lazy_chunks[0].read_text(encoding="utf-8")
+    assert worker_chunks[0].name in maplibre_chunk_src
+
     hacs = json.loads(hacs_path.read_text())
     assert hacs.get("content_in_root", False) is False
     assert hacs["render_readme"] is True

@@ -31,7 +31,17 @@ function precompressGzipPlugin(targetDir: string): Plugin {
 }
 
 export default defineConfig({
+  base: "./",
   plugins: [precompressGzipPlugin(outDir)],
+  worker: {
+    format: "es",
+    rollupOptions: {
+      output: {
+        entryFileNames: "solar-sky-radar-worker-[hash].js",
+        chunkFileNames: "solar-sky-radar-worker-[name]-[hash].js",
+      },
+    },
+  },
   build: {
     outDir,
     emptyOutDir: true,
@@ -49,11 +59,13 @@ export default defineConfig({
         chunkFileNames: "solar-sky-radar-[name]-[hash].js",
         manualChunks(id) {
           if (
-            id.includes("node_modules/") &&
-            !id.includes("node_modules/lit") &&
-            !id.includes("node_modules/@lit") &&
-            !id.endsWith(".css?inline") &&
-            !id.endsWith(".css")
+            id.includes("frontend/src/map/maplibre-runtime") ||
+            id.includes("frontend/src/utils/resolve-worker-url") ||
+            (id.includes("node_modules/") &&
+              !id.includes("node_modules/lit") &&
+              !id.includes("node_modules/@lit") &&
+              !id.endsWith(".css?inline") &&
+              !id.endsWith(".css"))
           ) {
             return "maplibre";
           }

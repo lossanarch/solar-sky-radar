@@ -286,7 +286,7 @@ G.elementStyles = [], G.shadowRootOptions = { mode: "open" }, G[it("elementPrope
  */
 const rt = globalThis, Kt = (s) => s, gt = rt.trustedTypes, Gt = gt ? gt.createPolicy("lit-html", { createHTML: (s) => s }) : void 0, le = "$lit$", T = `lit$${Math.random().toFixed(9).slice(2)}$`, ne = "?" + T, we = `<${ne}>`, W = document, at = () => W.createComment(""), ot = (s) => s === null || typeof s != "object" && typeof s != "function", qt = Array.isArray, ke = (s) => qt(s) || typeof (s == null ? void 0 : s[Symbol.iterator]) == "function", wt = `[ 	
 \f\r]`, tt = /<(?:(!--|\/[^a-zA-Z])|(\/?[a-zA-Z][^>\s]*)|(\/?$))/g, Jt = /-->/g, Yt = />/g, U = RegExp(`>|${wt}(?:([^\\s"'>=/]+)(${wt}*=${wt}*(?:[^ 	
-\f\r"'\`<>=]|("|')|))|$)`, "g"), Xt = /'/g, Qt = /"/g, ce = /^(?:script|style|textarea|title)$/i, _e = (s) => (t, ...e) => ({ _$litType$: s, strings: t, values: e }), v = _e(1), J = Symbol.for("lit-noChange"), m = Symbol.for("lit-nothing"), te = /* @__PURE__ */ new WeakMap(), B = W.createTreeWalker(W, 129);
+\f\r"'\`<>=]|("|')|))|$)`, "g"), Xt = /'/g, Qt = /"/g, ce = /^(?:script|style|textarea|title)$/i, _e = (s) => (t, ...e) => ({ _$litType$: s, strings: t, values: e }), v = _e(1), J = Symbol.for("lit-noChange"), m = Symbol.for("lit-nothing"), te = /* @__PURE__ */ new WeakMap(), H = W.createTreeWalker(W, 129);
 function he(s, t) {
   if (!qt(s) || !s.hasOwnProperty("raw")) throw Error("invalid template strings array");
   return Gt !== void 0 ? Gt.createHTML(t) : t;
@@ -309,11 +309,11 @@ class st {
     this.parts = [];
     let a = 0, o = 0;
     const n = t.length - 1, h = this.parts, [c, l] = Ce(t, e);
-    if (this.el = st.createElement(c, i), B.currentNode = this.el.content, e === 2 || e === 3) {
+    if (this.el = st.createElement(c, i), H.currentNode = this.el.content, e === 2 || e === 3) {
       const d = this.el.content.firstChild;
       d.replaceWith(...d.childNodes);
     }
-    for (; (r = B.nextNode()) !== null && h.length < n; ) {
+    for (; (r = H.nextNode()) !== null && h.length < n; ) {
       if (r.nodeType === 1) {
         if (r.hasAttributes()) for (const d of r.getAttributeNames()) if (d.endsWith(le)) {
           const g = l[o++], p = r.getAttribute(d).split(T), u = /([.?@])?(.*)/.exec(g);
@@ -323,7 +323,7 @@ class st {
           const d = r.textContent.split(T), g = d.length - 1;
           if (g > 0) {
             r.textContent = gt ? gt.emptyScript : "";
-            for (let p = 0; p < g; p++) r.append(d[p], at()), B.nextNode(), h.push({ type: 2, index: ++a });
+            for (let p = 0; p < g; p++) r.append(d[p], at()), H.nextNode(), h.push({ type: 2, index: ++a });
             r.append(d[g], at());
           }
         }
@@ -359,16 +359,16 @@ class $e {
   }
   u(t) {
     const { el: { content: e }, parts: i } = this._$AD, r = ((t == null ? void 0 : t.creationScope) ?? W).importNode(e, !0);
-    B.currentNode = r;
-    let a = B.nextNode(), o = 0, n = 0, h = i[0];
+    H.currentNode = r;
+    let a = H.nextNode(), o = 0, n = 0, h = i[0];
     for (; h !== void 0; ) {
       if (o === h.index) {
         let c;
         h.type === 2 ? c = new nt(a, a.nextSibling, this, t) : h.type === 1 ? c = new h.ctor(a, h.name, h.strings, this, t) : h.type === 6 && (c = new ze(a, this, t)), this._$AV.push(c), h = i[++n];
       }
-      o !== (h == null ? void 0 : h.index) && (a = B.nextNode(), o++);
+      o !== (h == null ? void 0 : h.index) && (a = H.nextNode(), o++);
     }
-    return B.currentNode = W, r;
+    return H.currentNode = W, r;
   }
   p(t) {
     let e = 0;
@@ -1814,7 +1814,8 @@ async function pe() {
     let s;
     for (let t = 0; t < 3; t++)
       try {
-        return await import("./solar-sky-radar-maplibre-DL4POYj1.js");
+        const e = await import("./solar-sky-radar-maplibre-Cgu4aMgB.js");
+        return e.ensureMapLibreWorkerConfigured(), e.maplibregl;
       } catch (e) {
         s = e, t < 2 && await new Promise(
           (i) => globalThis.setTimeout(i, 300 * (t + 1))
@@ -1827,7 +1828,7 @@ function Ue() {
   pe().catch(() => {
   });
 }
-const He = "https://tiles.openfreemap.org/styles/dark", Be = "https://tiles.openfreemap.org/styles/positron", Ne = 3500, $t = /* @__PURE__ */ new Map(), K = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=", et = {
+const Be = "https://tiles.openfreemap.org/styles/dark", He = "https://tiles.openfreemap.org/styles/positron", Ne = 6e3, $t = /* @__PURE__ */ new Map(), K = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=", et = {
   type: "FeatureCollection",
   features: []
 }, Ve = [
@@ -1901,7 +1902,7 @@ function Ze(s, t) {
           continue;
         delete c["icon-image"], delete c["icon-size"], delete c["icon-padding"], delete c["icon-offset"], delete c["icon-anchor"], delete c["icon-optional"];
       }
-      if (delete l["icon-opacity"], delete l["icon-color"], delete l["icon-halo-color"], delete l["icon-halo-width"], "fill-pattern" in l && delete l["fill-pattern"], delete l["line-pattern"], delete l["background-pattern"], a.type === "background" ? l["background-color"] = t ? "#13281d" : "#d8ebd2" : a.type === "fill" && (o === "water" || h === "water" ? (l["fill-color"] = t ? "#0e2f52" : "#7cc0ec", l["fill-antialias"] = !0) : o.includes("wood") || o.includes("forest") ? l["fill-color"] = t ? "#1d3f2d" : "#b2d8a8" : o.includes("park") || o.includes("grass") || o.includes("wetland") ? l["fill-color"] = t ? "#183626" : "#c2e2ba" : o.includes("residential") ? l["fill-color"] = t ? "rgba(24, 49, 36, 0.45)" : "rgba(198, 222, 192, 0.45)" : o.includes("building") ? (l["fill-color"] = t ? "#183124" : "#cbe0c4", l["fill-outline-color"] = t ? "#214231" : "#b8d2b0") : o.includes("pier") ? l["fill-color"] = t ? "#1b3628" : "#cfe3c8" : o.includes("aeroway") ? l["fill-color"] = t ? "rgba(22, 43, 32, 0.72)" : "rgba(214, 231, 210, 0.72)" : (o.includes("ice") || o.includes("glacier")) && (l["fill-color"] = t ? "#1c3b4d" : "#e6f4f8")), a.type === "line" && (h === "waterway" || o.includes("waterway") ? l["line-color"] = t ? "#1b5084" : "#55a5df" : o.includes("highway_major") || o.includes("highway_motorway") ? o.includes("casing") ? l["line-color"] = t ? "rgba(12, 26, 19, 0.46)" : "rgba(134, 165, 130, 0.42)" : l["line-color"] = t ? "rgba(148, 163, 184, 0.30)" : "rgba(255, 255, 255, 0.54)" : o.includes("boundary") ? l["line-color"] = t ? "rgba(203, 213, 225, 0.46)" : "rgba(51, 65, 85, 0.44)" : (h === "transportation" || h === "aeroway" || o.includes("railway")) && (l["line-color"] = t ? "rgba(96, 132, 112, 0.24)" : "rgba(138, 168, 134, 0.36)")), a.type === "symbol" && "text-field" in c) {
+      if (delete l["icon-opacity"], delete l["icon-color"], delete l["icon-halo-color"], delete l["icon-halo-width"], "fill-pattern" in l && delete l["fill-pattern"], delete l["line-pattern"], delete l["background-pattern"], a.type === "background" ? l["background-color"] = t ? "#13281d" : "#d8ebd2" : a.type === "fill" && (o === "water" || h === "water" ? (l["fill-color"] = t ? "#0e2f52" : "#7cc0ec", l["fill-antialias"] = !0) : o.includes("wood") || o.includes("forest") ? l["fill-color"] = t ? "#1d3f2d" : "#b2d8a8" : o.includes("park") || o.includes("grass") || o.includes("wetland") ? l["fill-color"] = t ? "#183626" : "#c2e2ba" : o.includes("residential") ? l["fill-color"] = t ? "rgba(24, 49, 36, 0.45)" : "rgba(198, 222, 192, 0.45)" : o.includes("building") ? (l["fill-color"] = t ? "#183124" : "#cbe0c4", l["fill-outline-color"] = t ? "#214231" : "#b8d2b0") : o.includes("pier") ? l["fill-color"] = t ? "#1b3628" : "#cfe3c8" : o.includes("aeroway") ? l["fill-color"] = t ? "rgba(22, 43, 32, 0.72)" : "rgba(214, 231, 210, 0.72)" : (o.includes("ice") || o.includes("glacier")) && (l["fill-color"] = t ? "#1c3b4d" : "#e6f4f8")), a.type === "line" && (h === "waterway" || o.includes("waterway") ? l["line-color"] = t ? "#1b5084" : "#55a5df" : o.includes("highway_major") || o.includes("highway_motorway") ? o.includes("casing") ? l["line-color"] = t ? "rgba(9, 16, 14, 0.62)" : "rgba(100, 116, 139, 0.48)" : l["line-color"] = t ? "rgba(226, 232, 240, 0.48)" : "rgba(255, 255, 255, 0.64)" : o.includes("boundary") ? l["line-color"] = t ? "rgba(203, 213, 225, 0.46)" : "rgba(51, 65, 85, 0.44)" : (h === "transportation" || h === "aeroway" || o.includes("railway")) && (l["line-color"] = t ? "rgba(96, 132, 112, 0.24)" : "rgba(138, 168, 134, 0.36)")), a.type === "symbol" && "text-field" in c) {
         const d = "rgba(9, 16, 14, 0.95)", g = "rgba(255, 255, 255, 0.96)";
         o.includes("city_capital") || o.includes("city_large") ? (c["text-font"] = ["Noto Sans Bold"], c["text-size"] = [
           "interpolate",
@@ -2177,7 +2178,7 @@ class Je {
         isFallback: !1
       };
     }
-    const a = i ? He : Be, { style: o, isFallback: n } = await Ke(a, i);
+    const a = i ? Be : He, { style: o, isFallback: n } = await Ke(a, i);
     return { styleKey: e, isDark: i, styleSpec: o, isFallback: n };
   }
   scheduleFallbackBasemapUpgrade(t = 4500) {
@@ -2188,7 +2189,13 @@ class Je {
   async tryUpgradeFallbackBasemap() {
     if (this.destroyed || !this.map || !this.usingFallbackBasemap) return;
     const t = this.config.basemap_theme ?? "auto", e = ++this.styleSeq, i = await this.resolveStyleSpec(t);
-    this.destroyed || !this.map || e !== this.styleSeq || i.isFallback || (this.usingFallbackBasemap = !1, this.currentStyleKey = i.styleKey, this.styleReady = !1, this.appliedUrls = { tc: "", vc: "", rad: "" }, this.map.setStyle(i.styleSpec, { diff: !1 }));
+    if (!(this.destroyed || !this.map || e !== this.styleSeq)) {
+      if (i.isFallback) {
+        this.scheduleFallbackBasemapUpgrade(8e3);
+        return;
+      }
+      this.usingFallbackBasemap = !1, this.currentStyleKey = i.styleKey, this.styleReady = !1, this.appliedUrls = { tc: "", vc: "", rad: "" }, this.map.setStyle(i.styleSpec, { diff: !1 });
+    }
   }
   teardownMapOnly() {
     var t, e, i, r, a, o;
@@ -2275,7 +2282,7 @@ class Je {
     return this.map.getLayer("ssr-fires-core") && e.push("ssr-fires-core"), this.map.getLayer("ssr-fires-glow") && e.push("ssr-fires-glow"), e.length === 0 ? null : this.map.queryRenderedFeatures(t.point, { layers: e })[0] ?? null;
   }
   buildFirePopupNode(t, e, i) {
-    var Bt, Nt;
+    var Ht, Nt;
     const r = document.createElement("div");
     r.className = "ssr-fire-tooltip";
     const a = document.createElement("div");
@@ -2343,7 +2350,7 @@ class Je {
     }
     C(
       "Updated",
-      We(t.hours_ago, t.epoch, (Nt = (Bt = this.getHass()) == null ? void 0 : Bt.config) == null ? void 0 : Nt.time_zone)
+      We(t.hours_ago, t.epoch, (Nt = (Ht = this.getHass()) == null ? void 0 : Ht.config) == null ? void 0 : Nt.time_zone)
     );
     const bt = String(t.provider ?? "").trim();
     if (bt) {
@@ -2351,11 +2358,11 @@ class Je {
       L && !bt.toLowerCase().includes(L.toLowerCase()) && f.push(L), C("Source", f.join(" + "));
     }
     r.appendChild(q);
-    const Ut = String(t.incident_url ?? "").trim(), Ht = Ut.startsWith("https://");
-    if (i && Ht) {
+    const Ut = String(t.incident_url ?? "").trim(), Bt = Ut.startsWith("https://");
+    if (i && Bt) {
       const f = document.createElement("a");
       f.className = "ssr-fire-link", f.href = Ut, f.target = "_blank", f.rel = "noopener noreferrer", f.textContent = "Open official incident report ↗", r.appendChild(f);
-    } else if (!i && Ht) {
+    } else if (!i && Bt) {
       const f = document.createElement("div");
       f.className = "ssr-fire-hint", f.textContent = "Click hotspot to pin & open incident link", r.appendChild(f);
     }
@@ -2881,13 +2888,13 @@ const St = {
   autoplay: !1,
   playback_speed: 1
 };
-function H(s, t, e, i) {
+function B(s, t, e, i) {
   const r = typeof s == "number" ? s : Number(s);
   return Number.isFinite(r) ? Math.max(e, Math.min(i, r)) : t;
 }
 function Xe(s) {
   const t = { ...St, ...s };
-  if (t.zoom_level = H(t.zoom_level, 7.2, 3, 12), t.map_height = H(t.map_height, 490, 240, 1400), t.true_colour_opacity = H(t.true_colour_opacity, 1, 0.05, 1), t.cloud_opacity = H(t.cloud_opacity, 0.58, 0.05, 1), t.radar_opacity = H(t.radar_opacity, 0.85, 0.05, 1), t.wind_opacity = H(t.wind_opacity, 0.85, 0.05, 1), t.playback_speed = H(t.playback_speed, 1, 0.25, 4), t.center_latitude !== void 0) {
+  if (t.zoom_level = B(t.zoom_level, 7.2, 3, 12), t.map_height = B(t.map_height, 490, 240, 1400), t.true_colour_opacity = B(t.true_colour_opacity, 1, 0.05, 1), t.cloud_opacity = B(t.cloud_opacity, 0.58, 0.05, 1), t.radar_opacity = B(t.radar_opacity, 0.85, 0.05, 1), t.wind_opacity = B(t.wind_opacity, 0.85, 0.05, 1), t.playback_speed = B(t.playback_speed, 1, 0.25, 4), t.center_latitude !== void 0) {
     const e = Number(t.center_latitude);
     t.center_latitude = Number.isFinite(e) ? Math.max(-85, Math.min(85, e)) : void 0;
   }

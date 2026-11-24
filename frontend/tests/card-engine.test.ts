@@ -13,6 +13,7 @@ import {
   type WindPayload,
 } from "../src/types";
 import { defineCustomElementSafely } from "../src/utils/register-custom-element";
+import { resolveBundledWorkerUrl } from "../src/utils/resolve-worker-url";
 
 const MOCK_MANIFEST: ManifestPayload = {
   updated_epoch: 2200,
@@ -518,5 +519,41 @@ describe("iOS WebKit & Home Assistant resilience guards", () => {
       globalThis.fetch = origFetch;
       clearVectorStyleCacheForTests();
     }
+  });
+
+  it("resolveBundledWorkerUrl & ensureMapLibreWorkerConfigured point MapLibre v6 at a sibling .js worker", async () => {
+    expect(
+      resolveBundledWorkerUrl(
+        "/assets/solar-sky-radar-worker-abc123.js",
+        "https://ha.local:8123/solar_sky_radar/www/solar-sky-radar-maplibre-xyz.js"
+      )
+    ).toBe(
+      "https://ha.local:8123/solar_sky_radar/www/solar-sky-radar-worker-abc123.js"
+    );
+
+    expect(
+      resolveBundledWorkerUrl(
+        "./solar-sky-radar-worker-abc123.js",
+        "https://ha.example.com/hacsfiles/solar-sky-radar/solar-sky-radar-maplibre-xyz.js"
+      )
+    ).toBe(
+      "https://ha.example.com/hacsfiles/solar-sky-radar/solar-sky-radar-worker-abc123.js"
+    );
+
+    expect(
+      resolveBundledWorkerUrl(
+        "https://ha.local:8123/solar_sky_radar/www/solar-sky-radar-worker-abc123.js",
+        "https://ha.local:8123/solar_sky_radar/www/solar-sky-radar-maplibre-xyz.js"
+      )
+    ).toBe(
+      "https://ha.local:8123/solar_sky_radar/www/solar-sky-radar-worker-abc123.js"
+    );
+
+    const runtime = await import("../src/map/maplibre-runtime");
+    const configured = runtime.ensureMapLibreWorkerConfigured();
+    expect(configured.length).toBeGreaterThan(0);
+    expect(runtime.maplibregl.getWorkerUrl()).toBe(configured);
+    // Must never fall back to MapLibre v6's unbundled default `maplibre-gl-worker.mjs?v=...`
+    expect(configured.includes("maplibre-gl-worker.mjs?v=")).toBe(false);
   });
 });

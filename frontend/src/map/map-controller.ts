@@ -30,7 +30,9 @@ async function loadMapLibre(): Promise<MapLibreModule> {
       let lastErr: unknown;
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
-          return await import("maplibre-gl");
+          const runtime = await import("./maplibre-runtime");
+          runtime.ensureMapLibreWorkerConfigured();
+          return runtime.maplibregl;
         } catch (err) {
           lastErr = err;
           if (attempt < 2) {
@@ -54,7 +56,7 @@ export function preloadMapLibre(): void {
 
 const OPENFREEMAP_DARK_STYLE = "https://tiles.openfreemap.org/styles/dark";
 const OPENFREEMAP_LIGHT_STYLE = "https://tiles.openfreemap.org/styles/positron";
-export const DEFAULT_STYLE_FETCH_TIMEOUT_MS = 3500;
+export const DEFAULT_STYLE_FETCH_TIMEOUT_MS = 6000;
 
 // Cache sanitized base vector styles so switching themes or remounting cards requires zero extra fetches
 const SAFE_VECTOR_STYLE_CACHE = new Map<string, Promise<StyleSpecification>>();
@@ -258,12 +260,12 @@ export function sanitizeVectorStyleForPrivacy(
       } else if (id.includes("highway_major") || id.includes("highway_motorway")) {
         if (id.includes("casing")) {
           paint["line-color"] = dark
-            ? "rgba(12, 26, 19, 0.46)"
-            : "rgba(134, 165, 130, 0.42)";
+            ? "rgba(9, 16, 14, 0.62)"
+            : "rgba(100, 116, 139, 0.48)";
         } else {
           paint["line-color"] = dark
-            ? "rgba(148, 163, 184, 0.30)"
-            : "rgba(255, 255, 255, 0.54)";
+            ? "rgba(226, 232, 240, 0.48)"
+            : "rgba(255, 255, 255, 0.64)";
         }
       } else if (id.includes("boundary")) {
         paint["line-color"] = dark
@@ -893,7 +895,8 @@ export class MapController {
     const resolved = await this.resolveStyleSpec(theme);
     if (this.destroyed || !this.map || seq !== this.styleSeq) return;
     if (resolved.isFallback) {
-      // Still offline or OpenFreeMap still blocked; keep satellite/radar map running
+      // Still offline or cellular handshake stalled; retry in background while keeping weather rasters live
+      this.scheduleFallbackBasemapUpgrade(8000);
       return;
     }
     this.usingFallbackBasemap = false;
