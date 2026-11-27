@@ -14,6 +14,11 @@ import {
 } from "../src/types";
 import { defineCustomElementSafely } from "../src/utils/register-custom-element";
 import { resolveBundledWorkerUrl } from "../src/utils/resolve-worker-url";
+import {
+  computeOffsetMinutesFromNow,
+  formatRelativeOffset,
+  formatSlotBadge,
+} from "../src/utils/timeline-offset";
 
 const MOCK_MANIFEST: ManifestPayload = {
   updated_epoch: 2200,
@@ -555,5 +560,59 @@ describe("iOS WebKit & Home Assistant resilience guards", () => {
     expect(runtime.maplibregl.getWorkerUrl()).toBe(configured);
     // Must never fall back to MapLibre v6's unbundled default `maplibre-gl-worker.mjs?v=...`
     expect(configured.includes("maplibre-gl-worker.mjs?v=")).toBe(false);
+  });
+});
+
+describe("timeline relative offset & Latest pill formatting", () => {
+  it("labels the most current position as Latest and matches earlier slots against current time", () => {
+    // Example: current time is 07:28:45Z, latest image is 07:15:00Z, penultimate is 07:10:00Z
+    const nowMs = Date.parse("2026-11-27T07:28:45Z");
+    const latestSlot = {
+      epoch: Date.parse("2026-11-27T07:15:00Z") / 1000,
+      iso_utc: "2026-11-27T07:15:00Z",
+      offset_minutes: 0,
+      satellite_key: "s2",
+      radar_key: "r3",
+    };
+    const penultimateSlot = {
+      epoch: Date.parse("2026-11-27T07:10:00Z") / 1000,
+      iso_utc: "2026-11-27T07:10:00Z",
+      offset_minutes: -5,
+      satellite_key: "s1",
+      radar_key: "r2",
+    };
+    const olderHourSlot = {
+      epoch: Date.parse("2026-11-27T06:28:00Z") / 1000,
+      iso_utc: "2026-11-27T06:28:00Z",
+      offset_minutes: -47,
+      satellite_key: "s1",
+      radar_key: "r1",
+    };
+    const oldestSlot = {
+      epoch: Date.parse("2026-11-27T05:15:00Z") / 1000,
+      iso_utc: "2026-11-27T05:15:00Z",
+      offset_minutes: -120,
+      satellite_key: "s1",
+      radar_key: "r1",
+    };
+
+    expect(formatSlotBadge(latestSlot, true, nowMs)).toBe("Latest");
+    expect(formatSlotBadge(penultimateSlot, false, nowMs)).toBe("-18m");
+    expect(formatSlotBadge(olderHourSlot, false, nowMs)).toBe("-1h");
+    expect(formatSlotBadge(oldestSlot, false, nowMs)).toBe("-2h 13m");
+    expect(formatSlotBadge(undefined, false, nowMs)).toBe("...");
+    expect(formatSlotBadge(undefined, true, nowMs)).toBe("...");
+  });
+
+  it("stays consistent across seconds within the same minute and clamps minor clock skew", () => {
+    const slotEpoch = Date.parse("2026-11-27T07:10:00Z") / 1000;
+    expect(computeOffsetMinutesFromNow(slotEpoch, Date.parse("2026-11-27T07:28:00Z"))).toBe(-18);
+    expect(computeOffsetMinutesFromNow(slotEpoch, Date.parse("2026-11-27T07:28:59Z"))).toBe(-18);
+    expect(computeOffsetMinutesFromNow(slotEpoch, Date.parse("2026-11-27T07:29:00Z"))).toBe(-19);
+    expect(computeOffsetMinutesFromNow(slotEpoch, Date.parse("2026-11-27T07:08:00Z"))).toBe(0);
+    expect(formatRelativeOffset(0)).toBe("0m");
+    expect(formatRelativeOffset(-5)).toBe("-5m");
+    expect(formatRelativeOffset(-60)).toBe("-1h");
+    expect(formatRelativeOffset(-78)).toBe("-1h 18m");
   });
 });

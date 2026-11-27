@@ -1,7 +1,12 @@
 import { LitElement, css, html } from "lit";
-import { property } from "lit/decorators.js";
+import { property, state } from "lit/decorators.js";
 import type { TimelineSlot } from "../types";
 import { defineCustomElementSafely } from "../utils/register-custom-element";
+import {
+  computeOffsetMinutesFromNow,
+  formatRelativeOffset,
+  formatSlotBadge,
+} from "../utils/timeline-offset";
 
 const SPEEDS = [0.5, 1, 1.5, 2];
 
@@ -14,7 +19,41 @@ export class SolarSkyJogSlider extends LitElement {
   @property({ type: String }) timeZone = "";
   @property({ type: Boolean }) dark = true;
 
+  @state() private nowMs = Date.now();
+
   private dragging = false;
+  private minuteTimer: number | null = null;
+
+  connectedCallback(): void {
+    super.connectedCallback();
+    this.scheduleMinuteTick();
+  }
+
+  disconnectedCallback(): void {
+    super.disconnectedCallback();
+    this.clearMinuteTick();
+  }
+
+  protected willUpdate(): void {
+    this.nowMs = Date.now();
+  }
+
+  private clearMinuteTick(): void {
+    if (this.minuteTimer !== null) {
+      globalThis.clearTimeout(this.minuteTimer);
+      this.minuteTimer = null;
+    }
+  }
+
+  private scheduleMinuteTick(): void {
+    this.clearMinuteTick();
+    const now = Date.now();
+    this.nowMs = now;
+    const msUntilNextMinute = 60_000 - (now % 60_000) + 50;
+    this.minuteTimer = globalThis.setTimeout(() => {
+      this.scheduleMinuteTick();
+    }, msUntilNextMinute) as unknown as number;
+  }
 
   static styles = css`
     :host {
@@ -239,15 +278,6 @@ export class SolarSkyJogSlider extends LitElement {
     }
   }
 
-  private formatRelative(offsetMin: number): string {
-    if (offsetMin >= -2) return "LIVE";
-    const abs = Math.abs(offsetMin);
-    if (abs < 60) return `-${abs}m`;
-    const h = Math.floor(abs / 60);
-    const m = abs % 60;
-    return m === 0 ? `-${h}h` : `-${h}h ${m}m`;
-  }
-
   private scrubFromPointer(e: PointerEvent, isInitialDown: boolean): void {
     const track = e.currentTarget as HTMLElement;
     const rect = track.getBoundingClientRect();
@@ -302,8 +332,9 @@ export class SolarSkyJogSlider extends LitElement {
     const count = this.timeline.length;
     const activeSlot = this.timeline[this.currentIndex];
     const pct = count > 1 ? (this.currentIndex / (count - 1)) * 100 : 100;
-    const isNow = this.currentIndex >= count - 1;
+    const isLatest = count > 0 && this.currentIndex >= count - 1;
     const oldestSlot = this.timeline[0];
+    const midSlot = count > 2 ? this.timeline[Math.floor((count - 1) / 2)] : undefined;
 
     return html`
       <div class="bar" data-theme=${this.dark ? "dark" : "light"}>
@@ -361,8 +392,8 @@ export class SolarSkyJogSlider extends LitElement {
 
           <div class="time-readout">
             <span>${this.formatSlotTime(activeSlot)}</span>
-            <span class="offset-badge ${isNow ? "offset-now" : "offset-past"}">
-              ${activeSlot ? this.formatRelative(activeSlot.offset_minutes) : "..."}
+            <span class="offset-badge ${isLatest ? "offset-now" : "offset-past"}">
+              ${formatSlotBadge(activeSlot, isLatest, this.nowMs)}
             </span>
           </div>
         </div>
@@ -410,9 +441,23 @@ export class SolarSkyJogSlider extends LitElement {
         </div>
 
         <div class="scale-labels">
-          <span>${oldestSlot ? this.formatRelative(oldestSlot.offset_minutes) : "-2h"}</span>
-          <span>-1h</span>
-          <span>Now</span>
+          <span>
+            ${oldestSlot
+              ? formatRelativeOffset(
+                  computeOffsetMinutesFromNow(oldestSlot.epoch, this.nowMs)
+                )
+              : "-2h"}
+          </span>
+          <span>
+            ${midSlot
+              ? formatRelativeOffset(
+                  computeOffsetMinutesFromNow(midSlot.epoch, this.nowMs)
+                )
+              : count === 0
+                ? "-1h"
+                : ""}
+          </span>
+          <span>Latest</span>
         </div>
       </div>
     `;

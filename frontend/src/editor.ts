@@ -395,7 +395,7 @@ export class SolarSkyRadarCardEditor extends LitElement {
           >
             <option value="off">Off (Manual Play / Scrub)</option>
             <option value="once">
-              Single Play 2-Hour Loop When Shown (Plays Once to Live)
+              Single Play 2-Hour Loop When Shown (Plays Once to Latest)
             </option>
             <option value="loop">
               Continuous 2-Hour Loop While Visible
