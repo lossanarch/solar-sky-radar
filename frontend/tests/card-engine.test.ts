@@ -614,5 +614,7 @@ describe("timeline relative offset & Latest pill formatting", () => {
     expect(formatRelativeOffset(-5)).toBe("-5m");
     expect(formatRelativeOffset(-60)).toBe("-1h");
     expect(formatRelativeOffset(-78)).toBe("-1h 18m");
+    expect(formatRelativeOffset(Number.NaN)).toBe("0m");
+    expect(formatRelativeOffset(Number.POSITIVE_INFINITY)).toBe("0m");
   });
 });

@@ -664,6 +664,7 @@ function Mt(s, t = Date.now()) {
   return Math.min(0, e - i);
 }
 function St(s) {
+  if (!Number.isFinite(s)) return "0m";
   const t = Math.max(0, Math.round(Math.abs(s)));
   if (t === 0) return "0m";
   if (t < 60) return `-${t}m`;
@@ -680,7 +681,9 @@ var Fe = Object.defineProperty, F = (s, t, e, i) => {
 };
 const Ct = [0.5, 1, 1.5, 2], Ft = class Ft extends W {
   constructor() {
-    super(...arguments), this.timeline = [], this.readySlots = [], this.currentIndex = 0, this.playing = !1, this.speed = 1, this.timeZone = "", this.dark = !0, this.nowMs = Date.now(), this.dragging = !1, this.minuteTimer = null, this.onPointerDown = (t) => {
+    super(...arguments), this.timeline = [], this.readySlots = [], this.currentIndex = 0, this.playing = !1, this.speed = 1, this.timeZone = "", this.dark = !0, this.nowMs = Date.now(), this.dragging = !1, this.minuteTimer = null, this.onVisibilityChange = () => {
+      document.visibilityState === "visible" && this.scheduleMinuteTick();
+    }, this.onPointerDown = (t) => {
       t.stopPropagation(), this.dragging = !0, t.currentTarget.setPointerCapture(t.pointerId), this.scrubFromPointer(t, !0);
     }, this.onPointerMove = (t) => {
       this.dragging && (t.stopPropagation(), this.scrubFromPointer(t, !1));
@@ -695,10 +698,10 @@ const Ct = [0.5, 1, 1.5, 2], Ft = class Ft extends W {
     };
   }
   connectedCallback() {
-    super.connectedCallback(), this.scheduleMinuteTick();
+    super.connectedCallback(), typeof document < "u" && document.addEventListener("visibilitychange", this.onVisibilityChange), this.scheduleMinuteTick();
   }
   disconnectedCallback() {
-    super.disconnectedCallback(), this.clearMinuteTick();
+    super.disconnectedCallback(), typeof document < "u" && document.removeEventListener("visibilitychange", this.onVisibilityChange), this.clearMinuteTick();
   }
   willUpdate() {
     this.nowMs = Date.now();
@@ -712,7 +715,7 @@ const Ct = [0.5, 1, 1.5, 2], Ft = class Ft extends W {
     this.nowMs = t;
     const e = 6e4 - t % 6e4 + 50;
     this.minuteTimer = globalThis.setTimeout(() => {
-      this.scheduleMinuteTick();
+      this.isConnected && this.scheduleMinuteTick();
     }, e);
   }
   formatSlotTime(t) {
@@ -755,7 +758,7 @@ const Ct = [0.5, 1, 1.5, 2], Ft = class Ft extends W {
     );
   }
   render() {
-    const t = this.timeline.length, e = this.timeline[this.currentIndex], i = t > 1 ? this.currentIndex / (t - 1) * 100 : 100, r = t > 0 && this.currentIndex >= t - 1, a = this.timeline[0], o = t > 2 ? this.timeline[Math.floor((t - 1) / 2)] : void 0;
+    const t = this.timeline.length, e = this.timeline[this.currentIndex], i = t > 1 ? this.currentIndex / (t - 1) * 100 : 100, r = !!e && this.currentIndex >= t - 1, a = t > 1 ? this.timeline[0] : void 0, o = t > 2 ? this.timeline[Math.floor((t - 1) / 2)] : void 0;
     return v`
       <div class="bar" data-theme=${this.dark ? "dark" : "light"}>
         <div class="top-row">
@@ -848,7 +851,7 @@ const Ct = [0.5, 1, 1.5, 2], Ft = class Ft extends W {
           <span>
             ${a ? St(
       Mt(a.epoch, this.nowMs)
-    ) : "-2h"}
+    ) : t === 0 ? "-2h" : ""}
           </span>
           <span>
             ${o ? St(

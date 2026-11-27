@@ -42,10 +42,10 @@ Weather rasters are injected *below* MapLibre road, suburb label, and coastline 
 
 ### 4. Zero-Flicker 2-Hour Jogging Slider
 All 2 hours of WebP frames (`true_colour`, `cloud_mask` / `solar_cloud`, and `radar`) are preloaded into browser `Blob` URLs in reverse chronological order so dragging the jogging slider scrubs smoothly at 60 fps with:
-- Play / Pause loop (dwells briefly on `Now` before looping `-2h -> Now`)
+- Play / Pause loop (dwells briefly on `Latest` before looping `-2h -> Latest`)
 - Single-frame step buttons (`◀` / `▶`)
 - Speed selector (`0.5×`, `1×`, `1.5×`, `2×`)
-- Dual **Local Time + Relative Offset** readout (`10:40 (-15m)` / `Now`) and per-slot preload readiness ticks.
+- Dual **Local Time + Relative Offset** readout (`10:40 (-18m)` / `Latest`) and per-slot preload readiness ticks.
 
 ---
 
@@ -94,7 +94,7 @@ show_fires: true
 show_solar_rings: true
 show_solar_hud: true
 show_legend: true
-autoplay_mode: once          # off | once (plays 2h -> Live once when >=75% visible) | loop
+autoplay_mode: once          # off | once (plays 2h -> Latest once when >=75% visible) | loop
 playback_speed: 1
 ```
 

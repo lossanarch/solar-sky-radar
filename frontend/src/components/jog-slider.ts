@@ -24,13 +24,25 @@ export class SolarSkyJogSlider extends LitElement {
   private dragging = false;
   private minuteTimer: number | null = null;
 
+  private onVisibilityChange = (): void => {
+    if (document.visibilityState === "visible") {
+      this.scheduleMinuteTick();
+    }
+  };
+
   connectedCallback(): void {
     super.connectedCallback();
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", this.onVisibilityChange);
+    }
     this.scheduleMinuteTick();
   }
 
   disconnectedCallback(): void {
     super.disconnectedCallback();
+    if (typeof document !== "undefined") {
+      document.removeEventListener("visibilitychange", this.onVisibilityChange);
+    }
     this.clearMinuteTick();
   }
 
@@ -51,6 +63,7 @@ export class SolarSkyJogSlider extends LitElement {
     this.nowMs = now;
     const msUntilNextMinute = 60_000 - (now % 60_000) + 50;
     this.minuteTimer = globalThis.setTimeout(() => {
+      if (!this.isConnected) return;
       this.scheduleMinuteTick();
     }, msUntilNextMinute) as unknown as number;
   }
@@ -332,8 +345,8 @@ export class SolarSkyJogSlider extends LitElement {
     const count = this.timeline.length;
     const activeSlot = this.timeline[this.currentIndex];
     const pct = count > 1 ? (this.currentIndex / (count - 1)) * 100 : 100;
-    const isLatest = count > 0 && this.currentIndex >= count - 1;
-    const oldestSlot = this.timeline[0];
+    const isLatest = Boolean(activeSlot) && this.currentIndex >= count - 1;
+    const oldestSlot = count > 1 ? this.timeline[0] : undefined;
     const midSlot = count > 2 ? this.timeline[Math.floor((count - 1) / 2)] : undefined;
 
     return html`
@@ -446,7 +459,9 @@ export class SolarSkyJogSlider extends LitElement {
               ? formatRelativeOffset(
                   computeOffsetMinutesFromNow(oldestSlot.epoch, this.nowMs)
                 )
-              : "-2h"}
+              : count === 0
+                ? "-2h"
+                : ""}
           </span>
           <span>
             ${midSlot

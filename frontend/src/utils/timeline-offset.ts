@@ -11,6 +11,7 @@ export function computeOffsetMinutesFromNow(
 }
 
 export function formatRelativeOffset(offsetMin: number): string {
+  if (!Number.isFinite(offsetMin)) return "0m";
   const abs = Math.max(0, Math.round(Math.abs(offsetMin)));
   if (abs === 0) return "0m";
   if (abs < 60) return `-${abs}m`;
