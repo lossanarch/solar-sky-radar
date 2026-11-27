@@ -7,7 +7,7 @@ from typing import Final
 
 DOMAIN: Final = "solar_sky_radar"
 NAME: Final = "Solar Sky Radar"
-VERSION: Final = "0.1.7"
+VERSION: Final = "0.1.8"
 
 # Default coordinates: Melbourne, Victoria, Australia
 DEFAULT_LATITUDE: Final = -37.8136
